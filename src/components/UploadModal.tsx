@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react'
 import { X, Loader2 } from 'lucide-react'
-import { supabase } from '../lib/supabase'
 import type { ClothingItem, ClothingCategory } from '../types'
 
 interface Props {
