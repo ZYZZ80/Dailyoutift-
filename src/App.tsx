@@ -100,10 +100,10 @@ export default function App() {
 
       {tab === 'wardrobe' && (
         <WardrobePage
-          wardrobe={wardrobe}
-          config={config}
-          onUpdate={refresh}
-        />
+  wardrobe={wardrobe}
+  onUpdate={refresh}
+/>
+        
       )}
 
       {tab === 'build' && (
