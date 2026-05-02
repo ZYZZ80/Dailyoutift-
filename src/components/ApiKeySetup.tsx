@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Key, Cpu, Zap, CheckCircle, XCircle, Loader2, Cloud, Sparkles } from 'lucide-react'
+import { Zap } from 'lucide-react'
 import { saveConfig, type AppConfig } from '../lib/storage'
 import { testGeminiKey, checkProxy } from '../lib/claude'
 
@@ -13,8 +13,8 @@ type TestStatus = 'idle' | 'testing' | 'ok' | 'fail'
 export default function ApiKeySetup({ onSaved }: Props) {
   const [provider, setProvider] = useState<Provider>('gemini')
   const [apiKey, setApiKey] = useState('')
-  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:5173/ollama')
-  const [ollamaModel, setOllamaModel] = useState('moondream')
+const [ollamaUrl] = useState('http://localhost:5173/ollama')
+const [ollamaModel] = useState('moondream')
   const [error, setError] = useState('')
   const [testStatus, setTestStatus] = useState<TestStatus>('idle')
   const [testMsg, setTestMsg] = useState('')
