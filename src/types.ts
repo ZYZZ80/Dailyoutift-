@@ -22,3 +22,12 @@ export interface OutfitSuggestion {
   generatedAt: string
   previewImage?: string // AI-generated try-on photo
 }
+
+export interface StyleImage {
+  id: string
+  image: string
+  itemIds: string[]
+  outfitId?: string
+  source: 'daily-preview' | 'outfit-builder' | 'try-on'
+  createdAt: string
+}

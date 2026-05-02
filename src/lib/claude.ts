@@ -150,10 +150,30 @@ async function ollamaAnalyzeClothing(imageBase64: string, config: AppConfig) {
 
 // --- Proxy (server-side Gemini key) ---
 
+async function readProxyJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text) as Record<string, unknown>
+  } catch {
+    throw new Error(`AI proxy returned a non-JSON response (${res.status}). Check the Vercel function logs.`)
+  }
+}
+
+function proxyErrorMessage(data: Record<string, unknown>, status: number): string {
+  const code = typeof data.error === 'string' ? data.error : ''
+  const details = typeof data.details === 'string' ? data.details : ''
+  if (code === 'not_configured') return 'AI is not configured. Add OPENAI_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.'
+  if (code === 'quota_exceeded') return 'Quota exceeded - the built-in AI quota is full, please try again tomorrow.'
+  if (details) return details
+  if (code) return code
+  return `AI proxy error ${status}`
+}
+
 /** Returns true if the /api/ai proxy endpoint is live and configured. */
 export async function checkProxy(): Promise<boolean> {
   try {
-    const res = await fetch('/api/ai', { method: 'OPTIONS' })
+    const res = await fetch('/api/ai', { method: 'GET' })
     return res.ok
   } catch {
     return false
@@ -166,8 +186,8 @@ async function proxyAnalyzeClothing(imageBase64: string) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'analyze', imageBase64 }),
   })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error ?? `Proxy error ${res.status}`)
+  const data = await readProxyJson(res)
+  if (!res.ok) throw new Error(proxyErrorMessage(data, res.status))
   return data as { name: string; category: string; color: string; tags: string[] }
 }
 
@@ -177,10 +197,9 @@ async function proxyGenerateOutfit(wardrobe: ClothingItem[], date: string, occas
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'outfit', wardrobe, date, occasion }),
   })
-  const data = await res.json()
+  const data = await readProxyJson(res)
   if (!res.ok) {
-    if (res.status === 429) throw new Error('Quota exceeded — the built-in AI quota is full, please try again tomorrow')
-    throw new Error(data.error ?? `Proxy error ${res.status}`)
+    throw new Error(proxyErrorMessage(data, res.status))
   }
   return data as Omit<OutfitSuggestion, 'id' | 'generatedAt'>
 }
@@ -196,24 +215,40 @@ export async function analyzeClothing(
     try {
       return await geminiAnalyzeClothing(imageBase64, config.apiKey) as { name: string; category: string; color: string; tags: string[] }
     } catch (e) {
+      // fallback to proxy
+      try { return await proxyAnalyzeClothing(imageBase64) } catch { /* ignore */ }
       throw new Error(parseGeminiError(e))
     }
   }
   if (config.provider === 'ollama') return ollamaAnalyzeClothing(imageBase64, config) as Promise<{ name: string; category: string; color: string; tags: string[] }>
 
-  const { client, model } = getOpenAIClient(config)
-  const response = await client.chat.completions.create({
-    model,
-    max_tokens: 300,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: imageBase64 } },
-        { type: 'text', text: `Analyze this clothing item. Respond ONLY with valid JSON:\n{"name":"short name","category":"top|bottom|dress|shoes|accessory|outerwear","color":"main color","tags":["tag1","tag2","tag3"]}` },
-      ],
-    }],
-  })
-  return parseJSON(response.choices[0].message.content ?? '') as { name: string; category: string; color: string; tags: string[] }
+  // OpenAI direct — try gpt-4o-mini then gpt-4o, then fall back to proxy
+  const { client } = getOpenAIClient(config)
+  const analyzePrompt = 'Analyze this clothing item. Respond ONLY with valid JSON:\n{"name":"short name","category":"top|bottom|dress|shoes|accessory|outerwear","color":"main color","tags":["tag1","tag2","tag3"]}'
+  let lastErr: unknown
+  for (const model of ['gpt-4o-mini', 'gpt-4o']) {
+    try {
+      const response = await client.chat.completions.create({
+        model,
+        max_tokens: 300,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageBase64 } },
+            { type: 'text', text: analyzePrompt },
+          ],
+        }],
+      })
+      return parseJSON(response.choices[0].message.content ?? '') as { name: string; category: string; color: string; tags: string[] }
+    } catch (err) {
+      lastErr = err
+      const m = err instanceof Error ? err.message : String(err)
+      if (!m.includes('model') && !m.includes('not found') && !m.includes('access')) break
+    }
+  }
+  // Last resort: server-side proxy
+  try { return await proxyAnalyzeClothing(imageBase64) } catch { /* ignore */ }
+  throw lastErr ?? new Error('Could not analyze with OpenAI')
 }
 
 export async function generateOutfit(

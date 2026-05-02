@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { CalendarDays, Loader2, Sparkles, RefreshCw, ChevronRight } from 'lucide-react'
 import type { ClothingItem, OutfitSuggestion } from '../types'
 import { generateOutfit } from '../lib/claude'
-import { saveOutfit, recordWear, type AppConfig } from '../lib/storage'
-import { saveOutfitCloud } from '../lib/cloud'
+import { type AppConfig } from '../lib/storage'
+import { addItemCloud, saveOutfitCloud } from '../lib/cloud'
+import { isWashableItem } from '../lib/laundry'
 
 interface Props {
   wardrobe: ClothingItem[]
@@ -28,6 +29,7 @@ function getWeekDates(): string[] {
 }
 
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const MAX_WEEKLY_ITEM_USES = 2
 
 export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, userId }: Props) {
   const [generating, setGenerating] = useState<string | null>(null) // date being generated
@@ -42,16 +44,54 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
     return occasions[date] ?? DAY_OCCASIONS[i]
   }
 
+  function getWeeklyUsage(excludeDate?: string): Record<string, number> {
+    const usage: Record<string, number> = {}
+    weekDates.forEach((date) => {
+      if (date === excludeDate) return
+      const outfit = outfitMap[date]
+      if (outfit) outfit.itemIds.forEach((id) => { usage[id] = (usage[id] ?? 0) + 1 })
+    })
+    return usage
+  }
+
+  function getAvailableWardrobe(date: string, usageOverride?: Record<string, number>) {
+    const usage = usageOverride ?? getWeeklyUsage(date)
+    return wardrobe.filter((item) => (usage[item.id] ?? 0) < MAX_WEEKLY_ITEM_USES)
+  }
+
+  function countItemTypes(items: ClothingItem[]) {
+    return {
+      upper: items.filter((item) => item.category === 'top' || item.category === 'dress').length,
+      lower: items.filter((item) => item.category === 'bottom' || item.category === 'dress').length,
+    }
+  }
+
+  function validateWeeklyResult(result: Omit<OutfitSuggestion, 'id' | 'generatedAt'>, usage: Record<string, number>) {
+    const allowedIds = new Set(wardrobe.filter((item) => (usage[item.id] ?? 0) < MAX_WEEKLY_ITEM_USES).map((item) => item.id))
+    const itemIds = result.itemIds.filter((id) => allowedIds.has(id))
+    if (itemIds.length < 2) throw new Error('I need more unused pieces to keep every item under 2 wears this week.')
+    return { ...result, itemIds }
+  }
+
   async function generateDay(date: string, occasion: string) {
-    if (wardrobe.length < 2) { setError('Add at least 2 items to your wardrobe first!'); return }
+    const usage = getWeeklyUsage(date)
+    const availableWardrobe = getAvailableWardrobe(date, usage)
+    const availableTypes = countItemTypes(availableWardrobe)
+    if (availableWardrobe.length < 2 || availableTypes.upper === 0 || availableTypes.lower === 0) {
+      setError('Not enough available clothes. Each item can be used max 2 times per week.')
+      return
+    }
     setGenerating(date)
     setError('')
     try {
-      const result = await generateOutfit(wardrobe, date, config, occasion)
+      const result = validateWeeklyResult(await generateOutfit(availableWardrobe, date, config, occasion), usage)
       const saved = { id: crypto.randomUUID(), ...result, generatedAt: new Date().toISOString() }
-      saveOutfit(saved)
-      recordWear(saved.itemIds)
-      if (userId) saveOutfitCloud(userId, saved).catch(() => {})
+      if (!userId) throw new Error('Please sign in before saving outfits.')
+      await saveOutfitCloud(userId, saved)
+      await Promise.all(saved.itemIds.map((itemId) => {
+        const item = wardrobe.find((candidate) => candidate.id === itemId)
+        return item ? addItemCloud(userId, { ...item, wearCount: (item.wearCount ?? 0) + 1, lastWorn: date }) : Promise.resolve()
+      }))
       onUpdate()
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -65,10 +105,36 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
   async function planFullWeek() {
     if (wardrobe.length < 2) { setError('Add at least 2 items to your wardrobe first!'); return }
     setError('')
+    const rollingUsage = getWeeklyUsage()
     for (let i = 0; i < weekDates.length; i++) {
       const date = weekDates[i]
       const occasion = getOccasion(date, i)
-      await generateDay(date, occasion)
+      const availableWardrobe = getAvailableWardrobe(date, rollingUsage)
+      const availableTypes = countItemTypes(availableWardrobe)
+      if (availableWardrobe.length < 2 || availableTypes.upper === 0 || availableTypes.lower === 0) {
+        setError('Stopped weekly plan: not enough available clothes to keep every item under 2 wears.')
+        break
+      }
+      setGenerating(date)
+      try {
+        const result = validateWeeklyResult(await generateOutfit(availableWardrobe, date, config, occasion), rollingUsage)
+        const saved = { id: crypto.randomUUID(), ...result, generatedAt: new Date().toISOString() }
+        if (!userId) throw new Error('Please sign in before saving outfits.')
+        await saveOutfitCloud(userId, saved)
+        await Promise.all(saved.itemIds.map((itemId) => {
+          rollingUsage[itemId] = (rollingUsage[itemId] ?? 0) + 1
+          const item = wardrobe.find((candidate) => candidate.id === itemId)
+          return item ? addItemCloud(userId, { ...item, wearCount: (item.wearCount ?? 0) + 1, lastWorn: date }) : Promise.resolve()
+        }))
+        onUpdate()
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (msg.includes('429') || msg.includes('quota')) setError('Quota exceeded — get a new API key')
+        else setError(msg.substring(0, 100))
+        break
+      } finally {
+        setGenerating(null)
+      }
       // Small delay to avoid rate limiting
       if (i < weekDates.length - 1) await new Promise((r) => setTimeout(r, 800))
     }
@@ -76,12 +142,7 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
 
   const plannedCount = weekDates.filter((d) => outfitMap[d]).length
 
-  // Count how many times each item is used this week
-  const weeklyUsage: Record<string, number> = {}
-  weekDates.forEach((date) => {
-    const outfit = outfitMap[date]
-    if (outfit) outfit.itemIds.forEach((id) => { weeklyUsage[id] = (weeklyUsage[id] ?? 0) + 1 })
-  })
+  const weeklyUsage = getWeeklyUsage()
 
   return (
     <div className="space-y-6">
@@ -98,7 +159,7 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
           className="flex items-center gap-2 bg-charcoal text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black transition-colors disabled:opacity-50"
         >
           {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarDays className="w-4 h-4" />}
-          {generating ? `Planning ${DAY_NAMES[weekDates.indexOf(generating)]}…` : 'Plan My Week'}
+          {generating ? `Planning ${DAY_NAMES[weekDates.indexOf(generating)] ?? '…'}…` : 'Plan My Week'}
         </button>
       </div>
 
@@ -193,6 +254,7 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
                           </div>
                           <p className="text-[10px] text-gray-500 mt-1 truncate">{item.name}</p>
                           {usedThisWeek >= 2 && <p className="text-[9px] text-amber-500">×{usedThisWeek} this week</p>}
+                          {usedThisWeek >= 2 && isWashableItem(item) && <p className="text-[9px] text-amber-500">🧺 Wash</p>}
                         </div>
                       )
                     })}

@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npx cap *)",
+      "Bash(node -e ' *)",
+      "Bash(npx vite *)",
+      "Bash(powershell -Command \"Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force\")",
+      "Bash(npm uninstall *)",
+      "Bash(powershell -Command \"New-NetFirewallRule -DisplayName 'Vite Dev 5173' -Direction Inbound -Protocol TCP -LocalPort 5173 -Action Allow -Profile Any\")",
+      "Bash(powershell -Command \"Get-NetFirewallRule -DisplayName 'Vite*' 2>&1 | Select-Object DisplayName,Enabled,Direction,Action\")",
+      "Bash(powershell -Command \"ipconfig | findstr '192.168'\")",
+      "Bash(npx localtunnel *)",
+      "Bash(powershell -Command \"Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(curl -s https://api.ipify.org)",
+      "Bash(npx vercel *)",
+      "Bash(npx tsc *)",
+      "Bash(powershell -Command \"Get-Process -Name ollama -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(powershell -Command \"[System.Environment]::SetEnvironmentVariable\\('OLLAMA_ORIGINS', '*', 'User'\\); [System.Environment]::SetEnvironmentVariable\\('OLLAMA_HOST', '0.0.0.0', 'User'\\)\")",
+      "Bash(powershell -Command \"Start-Process ollama -ArgumentList 'serve' -WindowStyle Hidden\")",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(curl -s -I http://localhost:11434/api/tags)",
+      "Bash(powershell -Command ' *)",
+      "Bash(curl -s -I http://localhost:11434/)",
+      "Bash(ollama pull *)",
+      "Bash(ollama list *)",
+      "Bash(cat tailwind.config.js)",
+      "Bash(cat tailwind.config.ts)",
+      "Bash(python3 -c ' *)",
+      "Bash(npx firebase-tools *)",
+      "Bash(npm list *)"
+    ]
+  }
+}

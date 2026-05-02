@@ -1,38 +1,34 @@
 import { useState } from 'react'
-import { signInWithPopup, type User } from 'firebase/auth'
 import { Loader2, Sparkles } from 'lucide-react'
-import { auth, googleProvider } from '../lib/firebase'
+import { supabase } from '../lib/supabase'
 
 interface Props {
-  onLogin: (user: User) => void
+  onLogin?: () => void
 }
 
-export default function LoginPage({ onLogin }: Props) {
+export default function LoginPage({ onLogin: _onLogin }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   async function signIn() {
-    if (!auth) return
+    if (!supabase) {
+      setError('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel.')
+      return
+    }
     setLoading(true)
     setError('')
     try {
-      const result = await signInWithPopup(auth, googleProvider)
-      onLogin(result.user)
+      const { error: authError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: window.location.origin,
+        },
+      })
+      if (authError) throw authError
+      // Browser will redirect to Google then back; nothing more to do here
     } catch (e: unknown) {
-      const code = (e as { code?: string })?.code ?? ''
       const msg = e instanceof Error ? e.message : String(e)
-      if (code === 'auth/popup-closed-by-user' || msg.includes('popup-closed')) {
-        setError('Popup closed — please try again')
-      } else if (code === 'auth/unauthorized-domain') {
-        setError('Domain not authorized. Go to Firebase Console → Authentication → Settings → Authorized domains → add daily-outfit-stylist.vercel.app')
-      } else if (code === 'auth/operation-not-allowed') {
-        setError('Google sign-in not enabled. Go to Firebase Console → Authentication → Sign-in method → enable Google.')
-      } else if (code === 'auth/cancelled-popup-request') {
-        setError('Another sign-in popup is open. Close it and try again.')
-      } else {
-        setError(`Sign-in error (${code || 'unknown'}): ${msg.substring(0, 100)}`)
-      }
-    } finally {
+      setError(`Sign-in error: ${msg.substring(0, 140)}`)
       setLoading(false)
     }
   }
@@ -40,16 +36,13 @@ export default function LoginPage({ onLogin }: Props) {
   return (
     <div className="min-h-screen bg-cream flex items-center justify-center p-6">
       <div className="bg-white rounded-3xl shadow-lg p-8 max-w-sm w-full">
-
         <div className="flex justify-center mb-6">
           <div className="w-16 h-16 bg-charcoal rounded-2xl flex items-center justify-center">
             <Sparkles className="w-8 h-8 text-white" strokeWidth={1.5} />
           </div>
         </div>
 
-        <h1 className="text-2xl font-semibold text-charcoal text-center mb-2">
-          Daily Stylist
-        </h1>
+        <h1 className="text-2xl font-semibold text-charcoal text-center mb-2">Daily Stylist</h1>
         <p className="text-gray-400 text-sm text-center mb-8">
           Your AI wardrobe synced across all devices
         </p>
@@ -69,7 +62,7 @@ export default function LoginPage({ onLogin }: Props) {
               <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
             </svg>
           )}
-          {loading ? 'Signing in…' : 'Continue with Google'}
+          {loading ? 'Redirecting…' : 'Continue with Google'}
         </button>
 
         {error && (

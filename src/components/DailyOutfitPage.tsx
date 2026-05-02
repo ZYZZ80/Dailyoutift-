@@ -6,8 +6,10 @@ import {
 import type { ClothingItem, OutfitSuggestion } from '../types'
 import { generateOutfit } from '../lib/claude'
 import { generateOutfitPreview } from '../lib/preview'
-import { saveOutfit, getProfilePhotos, saveProfilePhotos, recordWear, type AppConfig } from '../lib/storage'
-import { saveOutfitCloud, uploadProfilePhoto } from '../lib/cloud'
+import { getProfilePhotos, saveProfilePhotos, type AppConfig } from '../lib/storage'
+import { addItemCloud, saveOutfitCloud, saveStyleCloud, uploadProfilePhoto, uploadStyleImage } from '../lib/cloud'
+import { convertImageFileToJpegDataUrl } from '../lib/image'
+import { needsWash as itemNeedsWash } from '../lib/laundry'
 
 const OCCASIONS = [
   { id: 'Casual',     emoji: '😊' },
@@ -40,6 +42,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
   const [activePhotoIdx, setActivePhotoIdx] = useState(0)
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [showTips, setShowTips] = useState(false)
+  const [photoError, setPhotoError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
   const uploadingSlot = useRef<number>(0)
 
@@ -54,11 +57,11 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
     fileRef.current?.click()
   }
 
-  function handlePhotoFile(file: File) {
+  async function handlePhotoFile(file: File) {
     const slot = uploadingSlot.current
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      const base64 = e.target?.result as string
+    setPhotoError('')
+    try {
+      const { dataUrl: base64 } = await convertImageFileToJpegDataUrl(file, 1200, 0.75)
       const updated = [...profilePhotos]
       updated[slot] = base64
       setProfilePhotos(updated)
@@ -71,10 +74,17 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
           updated[slot] = url
           setProfilePhotos([...updated])
           saveProfilePhotos(updated)
-        } catch { /* keep base64 */ }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setPhotoError(`Photo saved locally but cloud upload failed: ${msg.substring(0, 80)}`)
+        }
       }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setPhotoError(msg)
+    } finally {
+      if (fileRef.current) fileRef.current.value = ''
     }
-    reader.readAsDataURL(file)
   }
 
   function removePhoto(slot: number) {
@@ -92,12 +102,16 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
     // Step 1: Generate outfit
     setAgentStep('outfit')
     let outfitResult: Omit<OutfitSuggestion, 'id' | 'generatedAt'> | null = null
+    let savedOutfit: OutfitSuggestion | null = null
     try {
       outfitResult = await generateOutfit(wardrobe, today, config, selectedOccasion)
-      const savedOutfit = { id: crypto.randomUUID(), ...outfitResult, generatedAt: new Date().toISOString() }
-      saveOutfit(savedOutfit)
-      recordWear(savedOutfit.itemIds) // track wear count
-      if (userId) saveOutfitCloud(userId, savedOutfit).catch(() => {})
+      savedOutfit = { id: crypto.randomUUID(), ...outfitResult, generatedAt: new Date().toISOString() }
+      if (!userId) throw new Error('Please sign in before saving outfits.')
+      await saveOutfitCloud(userId, savedOutfit)
+      await Promise.all(savedOutfit.itemIds.map((itemId) => {
+        const item = wardrobe.find((candidate) => candidate.id === itemId)
+        return item ? addItemCloud(userId, { ...item, wearCount: (item.wearCount ?? 0) + 1, lastWorn: today }) : Promise.resolve()
+      }))
       onOutfitGenerated()
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -116,15 +130,30 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
         if (items.length > 0) {
           const url = await generateOutfitPreview(primaryPhoto, items, config)
           setPreviewImage(url)
-          // Save preview image into the outfit record
-          if (url && todayOutfit) {
-            const withPreview = { ...todayOutfit, previewImage: url }
-            saveOutfit(withPreview)
-            if (userId) saveOutfitCloud(userId, withPreview).catch(() => {})
-            onOutfitGenerated()
+          if (url && userId && savedOutfit) {
+            try {
+              const styleId = crypto.randomUUID()
+              const imageUrl = await uploadStyleImage(userId, styleId, url)
+              const withPreview = { ...savedOutfit, previewImage: imageUrl }
+              await saveStyleCloud(userId, {
+                id: styleId,
+                image: imageUrl,
+                itemIds: withPreview.itemIds,
+                outfitId: withPreview.id,
+                source: 'daily-preview',
+                createdAt: new Date().toISOString(),
+              })
+              await saveOutfitCloud(userId, withPreview)
+              onOutfitGenerated()
+            } catch {
+              // Save failed — image still shows on screen, outfit was already saved above
+            }
           }
         }
-      } catch { /* skip silently */ }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'unknown error'
+        setError('Outfit saved ✓  Try-on preview failed: ' + msg.substring(0, 80))
+      }
     }
 
     setAgentStep('done')
@@ -138,11 +167,19 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
     try {
       const url = await generateOutfitPreview(primaryPhoto, outfitItems, config)
       setPreviewImage(url)
-      // Save preview image into the outfit record
-      if (url && todayOutfit) {
-        const withPreview = { ...todayOutfit, previewImage: url }
-        saveOutfit(withPreview)
-        if (userId) saveOutfitCloud(userId, withPreview).catch(() => {})
+      if (url && todayOutfit && userId) {
+        const styleId = crypto.randomUUID()
+        const imageUrl = await uploadStyleImage(userId, styleId, url)
+        const withPreview = { ...todayOutfit, previewImage: imageUrl }
+        await saveStyleCloud(userId, {
+          id: styleId,
+          image: imageUrl,
+          itemIds: withPreview.itemIds,
+          outfitId: withPreview.id,
+          source: 'daily-preview',
+          createdAt: new Date().toISOString(),
+        })
+        await saveOutfitCloud(userId, withPreview)
         onOutfitGenerated()
       }
     } catch (e) {
@@ -231,6 +268,12 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
                 : 'Add photos for\nvirtual try-on'}
             </p>
           </div>
+          {photoError && (
+            <div className="mt-3 flex items-start gap-2 text-xs text-red-600 bg-red-50 rounded-xl px-4 py-2.5">
+              <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span className="break-words">{photoError}</span>
+            </div>
+          )}
         </div>
 
         {/* Generate button row */}
@@ -246,8 +289,8 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
             {buttonLabel}
           </button>
           <p className="text-xs text-gray-400">
-            {primaryPhoto && !isRunning && 'Photo selected · try-on auto-generates'}
-            {!primaryPhoto && !isRunning && 'Add a photo above for virtual try-on'}
+            {primaryPhoto && !isRunning && '📸 Photo ready — try-on will auto-generate'}
+            {!primaryPhoto && !isRunning && 'Add a photo above to enable virtual try-on'}
           </p>
         </div>
 
@@ -299,7 +342,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
             <div className="grid grid-cols-2 gap-3">
               {outfitItems.map((item) => {
                 const wears = item.wearCount ?? 0
-                const needsWash = wears >= 2
+                const needsWash = itemNeedsWash(item)
                 return (
                   <div key={item.id} className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 relative">
                     {needsWash && (
@@ -314,7 +357,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
                       <p className="text-sm font-medium text-charcoal truncate">{item.name}</p>
                       <div className="flex items-center justify-between mt-0.5">
                         <p className="text-xs text-gray-400 capitalize">{item.category}</p>
-                        <p className="text-xs text-gray-300">{wears}/2 wears</p>
+                        <p className="text-xs text-gray-300">Worn {wears}×</p>
                       </div>
                     </div>
                   </div>
@@ -350,7 +393,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
                 <p>👟 <strong>Shoe swap:</strong> Try white sneakers for a casual vibe, loafers for smart-casual, or boots for an edgier look.</p>
                 <p>🎨 <strong>Colour rule:</strong> Stick to 2–3 colours max. Add a pop with accessories if the outfit feels too neutral.</p>
                 <p>📦 <strong>Layer it:</strong> A light jacket, blazer, or overshirt can completely transform the outfit and make it more versatile.</p>
-                <p>🧺 <strong>Laundry tip:</strong> Items worn 2+ times are flagged in your wardrobe — wash before wearing again for freshness.</p>
+                <p>🧺 <strong>Laundry tip:</strong> Tops, bottoms, and dresses worn 2+ times are flagged in your wardrobe — shoes, accessories, and outerwear are not laundry items.</p>
               </div>
             )}
           </div>
@@ -372,7 +415,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
                       <button
                         key={i}
                         onClick={() => { setActivePhotoIdx(i); setPreviewImage(null) }}
-                        className={`w-6 h-6 rounded-full overflow-hidden border-2 ${activePhotoIdx === i ? 'border-white' : 'border-white/40'}`}
+                        className={`w-9 h-9 rounded-full overflow-hidden border-2 shadow ${activePhotoIdx === i ? 'border-white' : 'border-white/40'}`}
                       >
                         <img src={profilePhotos[i]} className="w-full h-full object-cover" alt="" />
                       </button>
@@ -417,7 +460,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
       )}
 
       <input ref={fileRef} type="file" accept="image/*" className="hidden"
-        onChange={(e) => e.target.files?.[0] && handlePhotoFile(e.target.files[0])} />
+        onChange={(e) => { if (e.target.files?.[0]) handlePhotoFile(e.target.files[0]); e.currentTarget.value = '' }} />
     </div>
   )
 }

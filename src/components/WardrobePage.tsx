@@ -1,8 +1,9 @@
 import { useState, useRef } from 'react'
 import { Plus, Trash2, Tag, Download, Upload } from 'lucide-react'
 import type { ClothingItem, ClothingCategory } from '../types'
-import { removeClothingItem, markWashed, exportBackup, importBackup, type AppConfig } from '../lib/storage'
+import { exportBackup, importBackup, removeClothingItem, type AppConfig } from '../lib/storage'
 import { removeItemCloud, addItemCloud } from '../lib/cloud'
+import { needsWash as itemNeedsWash } from '../lib/laundry'
 import UploadModal from './UploadModal'
 
 interface Props {
@@ -45,11 +46,11 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
     reader.readAsText(file)
   }
 
-  const needsWashCount = wardrobe.filter((item) => (item.wearCount ?? 0) >= 2).length
+  const needsWashCount = wardrobe.filter(itemNeedsWash).length
 
   const filtered =
     filter === 'all' ? wardrobe :
-    filter === 'wash' ? wardrobe.filter((item) => (item.wearCount ?? 0) >= 2) :
+    filter === 'wash' ? wardrobe.filter(itemNeedsWash) :
     wardrobe.filter((item) => item.category === filter)
 
   function handleDelete(id: string) {
@@ -59,8 +60,6 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
   }
 
   function handleWashed(item: ClothingItem) {
-    markWashed(item.id)
-    // Sync updated item to cloud
     if (userId) {
       const updated: ClothingItem = { ...item, wearCount: 0 }
       addItemCloud(userId, updated).catch(() => {})
@@ -147,7 +146,7 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {filtered.map((item) => {
             const wears = item.wearCount ?? 0
-            const needsWash = wears >= 2
+            const needsWash = itemNeedsWash(item)
             return (
               <div key={item.id} className={`bg-white rounded-2xl overflow-hidden shadow-sm border group ${needsWash ? 'border-amber-200' : 'border-gray-100'}`}>
                 <div className="relative aspect-square bg-gray-50">
@@ -163,8 +162,11 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
                       🧺 Wash
                     </div>
                   )}
-                  <button onClick={() => handleDelete(item.id)}
-                    className="absolute top-2 right-2 p-1.5 bg-white/90 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(item.id) }}
+                    className="absolute top-2 right-2 p-1.5 bg-white/90 rounded-full shadow-sm hover:bg-red-50 active:bg-red-100 transition-colors"
+                    title="Remove item"
+                  >
                     <Trash2 className="w-3.5 h-3.5 text-red-400" />
                   </button>
                 </div>
@@ -211,7 +213,7 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
             <p className="text-xs text-gray-400">Need wash</p>
           </div>
           <div>
-            <p className="text-lg font-semibold text-sage">{wardrobe.filter(i => !i.lastWorn).length}</p>
+            <p className="text-lg font-semibold text-green-600">{wardrobe.filter(i => !i.lastWorn).length}</p>
             <p className="text-xs text-gray-400">Never worn</p>
           </div>
         </div>

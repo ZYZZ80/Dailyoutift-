@@ -1,26 +1,33 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Wand2, X, Download, RefreshCw, User, CheckCircle2, ImageOff, Loader2 } from 'lucide-react'
 import type { ClothingItem } from '../types'
 import type { AppConfig } from '../lib/storage'
 import { getProfilePhotos } from '../lib/storage'
 import { generateOutfitLook } from '../lib/preview'
+import { saveStyleCloud, uploadStyleImage } from '../lib/cloud'
 
 interface Props {
   wardrobe: ClothingItem[]
   config: AppConfig
+  userId?: string
 }
 
 const CATEGORY_ORDER = ['outerwear', 'top', 'bottom', 'dress', 'shoes', 'accessory']
 
-export default function OutfitBuilderPage({ wardrobe, config }: Props) {
+export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [useProfilePhoto, setUseProfilePhoto] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [resultImage, setResultImage] = useState<string | null>(null)
   const [error, setError] = useState('')
-
-  const profilePhotos = getProfilePhotos()
+  const [profilePhotos, setProfilePhotos] = useState<string[]>(() => getProfilePhotos())
   const hasProfilePhoto = profilePhotos.length > 0
+
+  useEffect(() => {
+    const onFocus = () => setProfilePhotos(getProfilePhotos())
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
 
   const sorted = [...wardrobe].sort((a, b) =>
     CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category)
@@ -43,22 +50,45 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
     setGenerating(true)
     setError('')
     setResultImage(null)
+    let generatedImage: string | null = null
     try {
+      // Step 1 — generate the image (always show result to user)
       const profilePhoto = (useProfilePhoto && hasProfilePhoto) ? profilePhotos[0] : null
-      const image = await generateOutfitLook(selectedItems, profilePhoto, config)
-      setResultImage(image)
+      generatedImage = await generateOutfitLook(selectedItems, profilePhoto, config)
+      setResultImage(generatedImage)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (msg.includes('quota') || msg.includes('429')) {
-        setError('AI quota exceeded — try again later or switch to a different provider in Settings.')
+        setError('AI quota exceeded — try again later or switch provider in Settings.')
       } else if (msg.includes('No image')) {
-        setError('The AI didn\'t generate an image. Try selecting fewer items or different ones.')
+        setError('AI didn\'t return an image — try fewer items or different ones.')
       } else {
         setError(`Generation failed: ${msg.slice(0, 100)}`)
       }
-    } finally {
       setGenerating(false)
+      return
     }
+
+    // Step 2 — save to Styles (separate from generation so image always shows)
+    if (userId && generatedImage) {
+      try {
+        const styleId = crypto.randomUUID()
+        const imageUrl = await uploadStyleImage(userId, styleId, generatedImage)
+        await saveStyleCloud(userId, {
+          id: styleId,
+          image: imageUrl,
+          itemIds: selectedItems.map((item) => item.id),
+          source: 'outfit-builder',
+          createdAt: new Date().toISOString(),
+        })
+        setResultImage(imageUrl) // update to the saved URL
+      } catch {
+        // Saving failed but image is still displayed — not a blocking error
+        setError('Image generated but couldn\'t save to Styles — you can still download it.')
+      }
+    }
+
+    setGenerating(false)
   }
 
   function handleDownload() {

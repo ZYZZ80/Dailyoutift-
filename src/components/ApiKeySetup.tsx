@@ -16,7 +16,7 @@ type TestStatus = 'idle' | 'testing' | 'ok' | 'fail'
 export default function ApiKeySetup({ onSaved, userId }: Props) {
   const [provider, setProvider] = useState<Provider>('gemini')
   const [apiKey, setApiKey] = useState('')
-  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:5173/ollama')
+  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
   const [ollamaModel, setOllamaModel] = useState('moondream')
   const [error, setError] = useState('')
   const [testStatus, setTestStatus] = useState<TestStatus>('idle')
