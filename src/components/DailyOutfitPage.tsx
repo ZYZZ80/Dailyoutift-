@@ -54,15 +54,21 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
     fileRef.current?.click()
   }
 
-  function handlePhotoFile(file: File) {
-    const slot = uploadingSlot.current
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      const base64 = e.target?.result as string
-      const updated = [...profilePhotos]
-      updated[slot] = base64
-      setProfilePhotos(updated)
-      saveProfilePhotos(updated)
+ function handlePhotoFile(file: File) {
+  const slot = uploadingSlot.current
+  const reader = new FileReader()
+
+  reader.onload = (e) => {
+    const base64 = e.target?.result as string
+    const updated = [...profilePhotos]
+
+    updated[slot] = base64
+    setProfilePhotos(updated)
+    saveProfilePhotos(updated)
+  }
+
+  reader.readAsDataURL(file)
+}
 
       // Upload to Firebase Storage
       if (userId) {
