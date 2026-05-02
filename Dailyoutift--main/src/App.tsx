@@ -1,7 +1,13 @@
-import { useState } from 'react'
-import type { ClothingItem, OutfitSuggestion } from './types'
-import { getConfig, getWardrobe, getOutfits, type AppConfig } from './lib/storage'
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App'   // ❌ NO .tsx
 
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
 import WardrobePage from './components/WardrobePage'
 import DailyOutfitPage from './components/DailyOutfitPage'
 import WeekPlanPage from './components/WeekPlanPage'
