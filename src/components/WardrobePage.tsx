@@ -52,20 +52,26 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
     filter === 'wash' ? wardrobe.filter((item) => (item.wearCount ?? 0) >= 2) :
     wardrobe.filter((item) => item.category === filter)
 
-  function handleDelete(id: string) {
-    removeClothingItem(id)
-    if (userId) removeItemCloud(userId, id).catch(() => {})
-    onUpdate()
+async function handleDelete(id: string) {
+  await removeClothingItem(id)
+
+  if (userId) {
+    removeItemCloud(userId, id).catch(() => {})
   }
 
-  function handleWashed(item: ClothingItem) {
-    markWashed(item.id)
-    // Sync updated item to cloud
-    if (userId) {
-      const updated: ClothingItem = { ...item, wearCount: 0 }
-      addItemCloud(userId, updated).catch(() => {})
-    }
-    onUpdate()
+  onUpdate()
+}
+
+  async function handleWashed(item: ClothingItem) {
+  await markWashed(item.id)
+
+  if (userId) {
+    const updated: ClothingItem = { ...item, wearCount: 0 }
+    addItemCloud(userId, updated).catch(() => {})
+  }
+
+  onUpdate()
+}
   }
 
   return (
