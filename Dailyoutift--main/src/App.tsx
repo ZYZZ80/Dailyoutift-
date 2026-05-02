@@ -33,7 +33,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-cream p-6">
 
-      {/* Navigation */}
       <div className="flex gap-2 mb-6 flex-wrap">
         <button onClick={() => setTab('today')}>Today</button>
         <button onClick={() => setTab('wardrobe')}>Wardrobe</button>
@@ -43,7 +42,6 @@ export default function App() {
         <button onClick={() => setTab('history')}>History</button>
       </div>
 
-      {/* Pages */}
       {tab === 'today' && (
         <DailyOutfitPage
           wardrobe={wardrobe}
