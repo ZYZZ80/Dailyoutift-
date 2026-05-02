@@ -3,7 +3,7 @@ import { Key, Cpu, Zap, CheckCircle, XCircle, Loader2, Cloud, Sparkles } from 'l
 import { saveConfig, type AppConfig } from '../lib/storage'
 import { saveConfigCloud } from '../lib/cloud'
 import { testGeminiKey, checkProxy } from '../lib/claude'
-import { FIREBASE_ENABLED } from '../lib/firebase'
+
 
 interface Props {
   onSaved: () => void
