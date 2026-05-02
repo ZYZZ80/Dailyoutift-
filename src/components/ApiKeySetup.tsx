@@ -213,7 +213,7 @@ export default function ApiKeySetup({ onSaved, userId }: Props) {
 
         {error && <p className="text-red-400 text-xs mb-3">{error}</p>}
 
-        {FIREBASE_ENABLED && userId && (
+        {
           <div className="flex items-center justify-center gap-1.5 text-xs text-green-600 bg-green-50 rounded-xl px-3 py-2 mb-3">
             <Cloud className="w-3.5 h-3.5 flex-shrink-0" />
             Key will be saved to your account — no need to re-enter on other devices
