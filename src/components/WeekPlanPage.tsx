@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { CalendarDays, Loader2, Sparkles, RefreshCw, ChevronRight } from 'lucide-react'
 import type { ClothingItem, OutfitSuggestion } from '../types'
-import { generateOutfit } from '../lib/claude'
+
 import { saveOutfit, recordWear, type AppConfig } from '../lib/storage'
-import { saveOutfitCloud } from '../lib/cloud'
+
 
 interface Props {
   wardrobe: ClothingItem[]
