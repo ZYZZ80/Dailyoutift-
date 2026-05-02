@@ -7,7 +7,7 @@ import type { ClothingItem, OutfitSuggestion } from '../types'
 import { generateOutfit } from '../lib/claude'
 import { generateOutfitPreview } from '../lib/preview'
 import { saveOutfit, getProfilePhotos, saveProfilePhotos, recordWear, type AppConfig } from '../lib/storage'
-import { saveOutfitCloud, uploadProfilePhoto } from '../lib/cloud'
+// Firebase removed — no cloud syncou
 
 const OCCASIONS = [
   { id: 'Casual',     emoji: '😊' },
