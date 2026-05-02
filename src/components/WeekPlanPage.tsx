@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CalendarDays, Loader2, Sparkles, RefreshCw, ChevronRight } from 'lucide-react'
+import { CalendarDays, Loader2 } from 'lucide-react'
 import type { ClothingItem, OutfitSuggestion } from '../types'
 
 import { saveOutfit, recordWear, type AppConfig } from '../lib/storage'
@@ -32,7 +32,7 @@ const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate }: Props) {
   const [generating, setGenerating] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [occasions, setOccasions] = useState<Record<string, string>>({})
+const [occasions] = useState<Record<string, string>>({})
 
   const weekDates = getWeekDates()
   const outfitMap = Object.fromEntries(outfits.map((o) => [o.date, o]))
