@@ -223,7 +223,13 @@ async function handleDelete(id: string) {
         </div>
       )}
 
-      {showUpload && <UploadModal config={config} onClose={() => setShowUpload(false)} onAdded={onUpdate} userId={userId} />}
+            {showUpload && (
+        <UploadModal
+          config={config}
+          onClose={() => setShowUpload(false)}
+          onAdded={onUpdate}
+        />
+      )}
     </div>
   )
 }
