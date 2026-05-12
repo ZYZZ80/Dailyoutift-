@@ -1,7 +1,20 @@
-import OpenAI from 'openai'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+// Lazy SDK loaders — see comment in claude.ts
+import type OpenAIType from 'openai'
+import type { GoogleGenerativeAI as GoogleGenerativeAIType } from '@google/generative-ai'
 import type { AppConfig } from './storage'
 import type { ClothingItem } from '../types'
+
+let _OpenAI: typeof OpenAIType | null = null
+async function getOpenAIClass() {
+  if (!_OpenAI) _OpenAI = (await import('openai')).default
+  return _OpenAI
+}
+
+let _GoogleGenAI: typeof GoogleGenerativeAIType | null = null
+async function getGoogleGenAIClass() {
+  if (!_GoogleGenAI) _GoogleGenAI = (await import('@google/generative-ai')).GoogleGenerativeAI
+  return _GoogleGenAI
+}
 
 async function base64ToFile(dataUrl: string, filename: string): Promise<File> {
   const res = await fetch(dataUrl)
@@ -10,6 +23,7 @@ async function base64ToFile(dataUrl: string, filename: string): Promise<File> {
 }
 
 async function describePersonWithGemini(profilePhoto: string, apiKey: string): Promise<string> {
+  const GoogleGenerativeAI = await getGoogleGenAIClass()
   const genAI = new GoogleGenerativeAI(apiKey)
   const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
   const base64Data = profilePhoto.includes(',') ? profilePhoto.split(',')[1] : profilePhoto
@@ -44,6 +58,7 @@ export async function generateOutfitLook(
   }
 
   if (config.provider === 'gemini') {
+    const GoogleGenerativeAI = await getGoogleGenAIClass()
     const genAI = new GoogleGenerativeAI(config.apiKey)
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,6 +94,7 @@ export async function generateOutfitLook(
   }
 
   // OpenAI fallback
+  const OpenAI = await getOpenAIClass()
   const client = new OpenAI({ apiKey: config.apiKey, dangerouslyAllowBrowser: true })
   if (profilePhoto) {
     const imageFile = await base64ToFile(profilePhoto, 'profile.jpg')
@@ -103,9 +119,10 @@ export async function generateOutfitLook(
   try {
     const imgRes = await fetch(url)
     const blob = await imgRes.blob()
-    return await new Promise<string>((resolve) => {
+    return await new Promise<string>((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(new Error('Failed to read image'))
       reader.readAsDataURL(blob)
     })
   } catch {
@@ -122,6 +139,7 @@ export async function generateOutfitPreview(
 
   if (config.provider === 'gemini') {
     const personDesc = await describePersonWithGemini(profilePhoto, config.apiKey)
+    const GoogleGenerativeAI = await getGoogleGenAIClass()
     const genAI = new GoogleGenerativeAI(config.apiKey)
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' })
     const base64Data = profilePhoto.includes(',') ? profilePhoto.split(',')[1] : profilePhoto
@@ -147,6 +165,7 @@ export async function generateOutfitPreview(
   }
 
   // OpenAI: use gpt-image-1 edit with actual person photo for realistic try-on
+  const OpenAI = await getOpenAIClass()
   const client = new OpenAI({ apiKey: config.apiKey, dangerouslyAllowBrowser: true })
   const imageFile = await base64ToFile(profilePhoto, 'profile.jpg')
 
@@ -174,9 +193,10 @@ export async function generateOutfitPreview(
   try {
     const res = await fetch(tempUrl)
     const blob = await res.blob()
-    return await new Promise<string>((resolve) => {
+    return await new Promise<string>((resolve, reject) => {
       const reader = new FileReader()
       reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(new Error('Failed to read image'))
       reader.readAsDataURL(blob)
     })
   } catch {

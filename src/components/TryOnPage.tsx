@@ -1,12 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  ShoppingBag, Loader2, Download, Sparkles, X,
+  ShoppingBag, Download, Sparkles, X,
   Camera, Plus, RefreshCw, CheckCircle, Info,
 } from 'lucide-react'
 import type { AppConfig } from '../lib/storage'
 import { getProfilePhotos, saveProfilePhotos } from '../lib/storage'
 import { saveStyleCloud, uploadStyleImage, uploadProfilePhoto } from '../lib/cloud'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
+import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 
 interface Props {
   config: AppConfig
@@ -27,7 +28,9 @@ function compressImage(dataUrl: string, maxPx = 1024, quality = 0.8): Promise<st
       }
       const canvas = document.createElement('canvas')
       canvas.width = width; canvas.height = height
-      canvas.getContext('2d')!.drawImage(img, 0, 0, width, height)
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { resolve(dataUrl); return }
+      ctx.drawImage(img, 0, 0, width, height)
       resolve(canvas.toDataURL('image/jpeg', quality))
     }
     img.onerror = () => resolve(dataUrl)
@@ -48,14 +51,28 @@ export default function TryOnPage({ userId, onSaved }: Props) {
   const [bodyImage, setBodyImage] = useState<string | null>(null)
   const [result, setResult] = useState<string | null>(null)
   const [description, setDescription] = useState('')
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
   const [profilePhotos, setProfilePhotos] = useState<string[]>(() => getProfilePhotos())
   const [activeProfileIdx, setActiveProfileIdx] = useState(0)
 
+  // Background-job state — survives page navigation
+  const job = useGenerationJob()
+  const isMyJob = job?.kind === 'try-on'
+  const loading = isMyJob && job?.status === 'running'
+
   const itemRef = useRef<HTMLInputElement>(null)
   const bodyRef = useRef<HTMLInputElement>(null)
+
+  // When the queue's job for this page finishes, pull the result into local state
+  useEffect(() => {
+    if (isMyJob && job?.status === 'done' && job.result) {
+      setResult(job.result.imageBase64)
+      setDescription(job.result.description ?? '')
+    } else if (isMyJob && job?.status === 'error') {
+      setError(job.error?.substring(0, 140) ?? 'Generation failed')
+    }
+  }, [job?.id, job?.status])
 
   // Refresh profile photos when window regains focus (in case user added on another page)
   useEffect(() => {
@@ -71,12 +88,15 @@ export default function TryOnPage({ userId, onSaved }: Props) {
     }
     const reader = new FileReader()
     reader.onload = async (e) => {
-      const compressed = await compressImage(e.target?.result as string)
+      const raw = e.target?.result
+      if (typeof raw !== 'string') return
+      const compressed = await compressImage(raw)
       setItemImages((prev) => [...prev, compressed])
       setResult(null)
       setSaved(false)
       setError('')
     }
+    reader.onerror = () => setError('Could not read image file')
     reader.readAsDataURL(file)
   }
 
@@ -112,57 +132,51 @@ export default function TryOnPage({ userId, onSaved }: Props) {
 
   async function runTryOn() {
     if (itemImages.length === 0) { setError('Add at least one clothing item photo'); return }
-    setLoading(true)
+    if (loading) return // prevent double-submit
     setError('')
     setResult(null)
     setSaved(false)
 
-    try {
-      const res = await fetch('/api/ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'try-on',
-          itemsBase64: itemImages,
-          bodyBase64: effectiveBodyImage ?? undefined,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        if (res.status === 429) throw new Error('AI quota exceeded — try again later')
-        throw new Error(data.error ?? `Server error ${res.status}`)
-      }
-      const imageBase64: string = data.imageBase64
-      const desc: string = data.description ?? ''
-      setResult(imageBase64)
-      setDescription(desc)
+    const items = [...itemImages]
+    const body = effectiveBodyImage ?? undefined
+    const uid = userId
 
-      // Auto-save to Styles & History
-      if (userId && imageBase64) {
-        try {
-          const styleId = crypto.randomUUID()
-          const imageUrl = await uploadStyleImage(userId, styleId, imageBase64)
-          await saveStyleCloud(userId, {
-            id: styleId,
-            image: imageUrl,
-            itemIds: [],
-            source: 'try-on',
-            createdAt: new Date().toISOString(),
-          })
-          setSaved(true)
-          onSaved?.()
-        } catch { /* user can manually save */ }
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (msg.includes('fetch') || msg.includes('network')) {
-        setError('No internet — check your connection and try again')
-      } else {
-        setError(msg.substring(0, 140))
-      }
-    } finally {
-      setLoading(false)
-    }
+    generationQueue.start({
+      kind: 'try-on',
+      origin: 'tryon',
+      label: `Trying on ${items.length} item${items.length !== 1 ? 's' : ''}`,
+      runner: async () => {
+        const res = await fetch('/api/ai', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'try-on', itemsBase64: items, bodyBase64: body }),
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          if (res.status === 429) throw new Error('AI quota exceeded — try again later')
+          throw new Error(data.error ?? `Server error ${res.status}`)
+        }
+        const imageBase64: string = data.imageBase64
+        const desc: string = data.description ?? ''
+
+        // Auto-save to Styles & History — happens in the background
+        if (uid && imageBase64) {
+          try {
+            const styleId = crypto.randomUUID()
+            const imageUrl = await uploadStyleImage(uid, styleId, imageBase64)
+            await saveStyleCloud(uid, {
+              id: styleId,
+              image: imageUrl,
+              itemIds: [],
+              source: 'try-on',
+              createdAt: new Date().toISOString(),
+            })
+          } catch { /* user can manually save */ }
+        }
+
+        return { imageBase64, description: desc }
+      },
+    })
   }
 
   function downloadResult() {
@@ -352,7 +366,7 @@ export default function TryOnPage({ userId, onSaved }: Props) {
         className="w-full flex items-center justify-center gap-2.5 bg-charcoal text-white py-4 rounded-2xl text-base font-semibold hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
       >
         {loading
-          ? <><Loader2 className="w-5 h-5 animate-spin" /> Generating your try-on…</>
+          ? <><Sparkles className="w-5 h-5 animate-pulse" /> Generating in background…</>
           : result
             ? <><RefreshCw className="w-5 h-5" /> Try Again</>
             : <><Sparkles className="w-5 h-5" /> Try It On</>
@@ -360,10 +374,27 @@ export default function TryOnPage({ userId, onSaved }: Props) {
       </button>
 
       {loading && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 text-center space-y-2">
-          <Loader2 className="w-8 h-8 animate-spin text-blush mx-auto" />
-          <p className="text-sm text-gray-500 font-medium">AI is styling you with {itemImages.length} item{itemImages.length !== 1 ? 's' : ''}…</p>
-          <p className="text-xs text-gray-300">This takes 15–40 seconds</p>
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          {/* Shimmering skeleton — feels much faster than a static spinner */}
+          <div
+            className="aspect-[3/4] w-full animate-shimmer"
+            style={{
+              backgroundImage:
+                'linear-gradient(90deg, #f3f4f6 0px, #fafafa 200px, #f3f4f6 400px)',
+              backgroundSize: '800px 100%',
+            }}
+          />
+          <div className="p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-blush rounded-full animate-pulse" />
+              <p className="text-xs text-gray-500 font-medium">
+                Styling you with {itemImages.length} item{itemImages.length !== 1 ? 's' : ''} — feel free to browse other tabs
+              </p>
+            </div>
+            <p className="text-[11px] text-gray-300">
+              You'll get a notification when it's ready ✨
+            </p>
+          </div>
         </div>
       )}
 

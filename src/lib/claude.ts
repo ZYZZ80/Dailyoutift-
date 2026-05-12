@@ -1,7 +1,22 @@
-import OpenAI from 'openai'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+// Lazy-load the heavy AI SDKs only when actually needed.
+// For users on the Built-in AI (proxy) provider — by far the common case —
+// neither SDK is ever loaded into the browser. Saves ~330 KB of JS.
+import type OpenAIType from 'openai'
+import type { GoogleGenerativeAI as GoogleGenerativeAIType } from '@google/generative-ai'
 import type { AppConfig } from './storage'
 import type { ClothingItem, OutfitSuggestion } from '../types'
+
+let _OpenAI: typeof OpenAIType | null = null
+async function getOpenAIClass(): Promise<typeof OpenAIType> {
+  if (!_OpenAI) _OpenAI = (await import('openai')).default
+  return _OpenAI
+}
+
+let _GoogleGenAI: typeof GoogleGenerativeAIType | null = null
+async function getGoogleGenAIClass(): Promise<typeof GoogleGenerativeAIType> {
+  if (!_GoogleGenAI) _GoogleGenAI = (await import('@google/generative-ai')).GoogleGenerativeAI
+  return _GoogleGenAI
+}
 
 // Gemini model preference order — tries each until one works
 const GEMINI_TEXT_MODELS = [
@@ -42,6 +57,7 @@ export function parseGeminiError(e: unknown): string {
 
 /** Get a Gemini model, trying fallbacks if the primary is unavailable */
 async function getGeminiModel(apiKey: string, models = GEMINI_TEXT_MODELS) {
+  const GoogleGenerativeAI = await getGoogleGenAIClass()
   const genAI = new GoogleGenerativeAI(apiKey)
   return genAI.getGenerativeModel({ model: models[0] })
 }
@@ -60,6 +76,15 @@ function extractFirstJSON(text: string): string {
     if (ch === '}') { depth--; if (depth === 0) return text.slice(start, i + 1) }
   }
   throw new Error('Incomplete JSON in response')
+}
+
+function normalizeClothingData(data: Record<string, unknown>): { name: string; category: string; color: string; tags: string[] } {
+  return {
+    name: typeof data.name === 'string' && data.name ? data.name : 'Unknown Item',
+    category: typeof data.category === 'string' && data.category ? data.category : 'top',
+    color: typeof data.color === 'string' ? data.color : '',
+    tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
+  }
 }
 
 function parseJSON(text: string): Record<string, unknown> {
@@ -100,7 +125,8 @@ export async function testGeminiKey(apiKey: string): Promise<{ ok: boolean; erro
 
 // --- OpenAI / Ollama ---
 
-function getOpenAIClient(config: AppConfig): { client: OpenAI; model: string } {
+async function getOpenAIClient(config: AppConfig): Promise<{ client: OpenAIType; model: string }> {
+  const OpenAI = await getOpenAIClass()
   if (config.provider === 'ollama') {
     return {
       client: new OpenAI({ apiKey: 'ollama', baseURL: `${resolveUrl(config.ollamaUrl)}/v1`, dangerouslyAllowBrowser: true }),
@@ -126,6 +152,7 @@ async function ollamaChat(ollamaBaseUrl: string, model: string, prompt: string, 
 
 async function ollamaAnalyzeClothing(imageBase64: string, config: AppConfig) {
   const baseURL = `${resolveUrl(config.ollamaUrl)}/v1`
+  const OpenAI = await getOpenAIClass()
   const visionClient = new OpenAI({ apiKey: 'ollama', baseURL, dangerouslyAllowBrowser: true })
   const desc = await visionClient.chat.completions.create({
     model: config.ollamaModel,
@@ -213,17 +240,17 @@ export async function analyzeClothing(
   if (config.provider === 'proxy') return proxyAnalyzeClothing(imageBase64)
   if (config.provider === 'gemini') {
     try {
-      return await geminiAnalyzeClothing(imageBase64, config.apiKey) as { name: string; category: string; color: string; tags: string[] }
+      return normalizeClothingData(await geminiAnalyzeClothing(imageBase64, config.apiKey))
     } catch (e) {
       // fallback to proxy
       try { return await proxyAnalyzeClothing(imageBase64) } catch { /* ignore */ }
       throw new Error(parseGeminiError(e))
     }
   }
-  if (config.provider === 'ollama') return ollamaAnalyzeClothing(imageBase64, config) as Promise<{ name: string; category: string; color: string; tags: string[] }>
+  if (config.provider === 'ollama') return normalizeClothingData(await ollamaAnalyzeClothing(imageBase64, config))
 
   // OpenAI direct — try gpt-4o-mini then gpt-4o, then fall back to proxy
-  const { client } = getOpenAIClient(config)
+  const { client } = await getOpenAIClient(config)
   const analyzePrompt = 'Analyze this clothing item. Respond ONLY with valid JSON:\n{"name":"short name","category":"top|bottom|dress|shoes|accessory|outerwear","color":"main color","tags":["tag1","tag2","tag3"]}'
   let lastErr: unknown
   for (const model of ['gpt-4o-mini', 'gpt-4o']) {
@@ -239,7 +266,7 @@ export async function analyzeClothing(
           ],
         }],
       })
-      return parseJSON(response.choices[0].message.content ?? '') as { name: string; category: string; color: string; tags: string[] }
+      return normalizeClothingData(parseJSON(response.choices[0].message.content ?? ''))
     } catch (err) {
       lastErr = err
       const m = err instanceof Error ? err.message : String(err)
@@ -282,7 +309,7 @@ export async function generateOutfit(
     return { ...parseJSON(raw), date } as Omit<OutfitSuggestion, 'id' | 'generatedAt'>
   }
 
-  const { client } = getOpenAIClient(config)
+  const { client } = await getOpenAIClient(config)
   const response = await client.chat.completions.create({
     model: 'gpt-4o',
     max_tokens: 600,

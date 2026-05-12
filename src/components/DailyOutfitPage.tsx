@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Sparkles, RefreshCw, Loader2, Calendar, Info, Camera, X, Wand2,
   Plus, Lightbulb,
@@ -10,6 +10,7 @@ import { getProfilePhotos, saveProfilePhotos, type AppConfig } from '../lib/stor
 import { addItemCloud, saveOutfitCloud, saveStyleCloud, uploadProfilePhoto, uploadStyleImage } from '../lib/cloud'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
 import { needsWash as itemNeedsWash } from '../lib/laundry'
+import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 
 const OCCASIONS = [
   { id: 'Casual',     emoji: '😊' },
@@ -49,8 +50,20 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
   const today = new Date().toISOString().split('T')[0]
   const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
   const outfitItems = todayOutfit ? wardrobe.filter((item) => todayOutfit.itemIds.includes(item.id)) : []
-  const isRunning = agentStep === 'outfit' || agentStep === 'preview'
+
+  // Track the queue's image-preview job in addition to the local "outfit pick" step
+  const job = useGenerationJob()
+  const isMyPreviewJob = job?.kind === 'outfit-preview'
+  const previewRunning = isMyPreviewJob && job?.status === 'running'
+  const isRunning = agentStep === 'outfit' || agentStep === 'preview' || previewRunning
   const primaryPhoto = profilePhotos[activePhotoIdx] ?? profilePhotos[0] ?? ''
+
+  // When the preview job finishes in the queue, pull its image into local state
+  useEffect(() => {
+    if (isMyPreviewJob && job?.status === 'done' && job.result) {
+      setPreviewImage(job.result.imageBase64)
+    }
+  }, [job?.id, job?.status])
 
   function openPhotoUpload(slot: number) {
     uploadingSlot.current = slot
@@ -122,37 +135,44 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
       return
     }
 
-    // Step 2: Auto try-on if photo exists
+    // Step 2: Auto try-on if photo exists — RUNS IN BACKGROUND QUEUE
+    // The user can navigate away and gets a notification when ready.
     if (primaryPhoto && config.provider !== 'ollama' && outfitResult) {
-      setAgentStep('preview')
-      try {
-        const items = wardrobe.filter((item) => (outfitResult!.itemIds as string[]).includes(item.id))
-        if (items.length > 0) {
-          const url = await generateOutfitPreview(primaryPhoto, items, config)
-          setPreviewImage(url)
-          if (url && userId && savedOutfit) {
-            try {
-              const styleId = crypto.randomUUID()
-              const imageUrl = await uploadStyleImage(userId, styleId, url)
-              const withPreview = { ...savedOutfit, previewImage: imageUrl }
-              await saveStyleCloud(userId, {
-                id: styleId,
-                image: imageUrl,
-                itemIds: withPreview.itemIds,
-                outfitId: withPreview.id,
-                source: 'daily-preview',
-                createdAt: new Date().toISOString(),
-              })
-              await saveOutfitCloud(userId, withPreview)
-              onOutfitGenerated()
-            } catch {
-              // Save failed — image still shows on screen, outfit was already saved above
+      const items = wardrobe.filter((item) => (outfitResult.itemIds as string[]).includes(item.id))
+      if (items.length > 0) {
+        const photo = primaryPhoto
+        const cfg = config
+        const uid = userId
+        const outfit = savedOutfit
+        const cb = onOutfitGenerated
+        generationQueue.start({
+          kind: 'outfit-preview',
+          origin: 'today',
+          label: `Generating today's outfit photo`,
+          runner: async () => {
+            const url = await generateOutfitPreview(photo, items, cfg)
+            // Auto-save to Styles & link to outfit in the background
+            if (url && uid && outfit) {
+              try {
+                const styleId = crypto.randomUUID()
+                const imageUrl = await uploadStyleImage(uid, styleId, url)
+                const withPreview = { ...outfit, previewImage: imageUrl }
+                await saveStyleCloud(uid, {
+                  id: styleId,
+                  image: imageUrl,
+                  itemIds: withPreview.itemIds,
+                  outfitId: withPreview.id,
+                  source: 'daily-preview',
+                  createdAt: new Date().toISOString(),
+                })
+                await saveOutfitCloud(uid, withPreview)
+                cb()
+                return { imageBase64: imageUrl }
+              } catch { /* fall through */ }
             }
-          }
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : 'unknown error'
-        setError('Outfit saved ✓  Try-on preview failed: ' + msg.substring(0, 80))
+            return { imageBase64: url }
+          },
+        })
       }
     }
 
