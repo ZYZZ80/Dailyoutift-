@@ -173,3 +173,22 @@ export function saveOutfit(outfit: OutfitSuggestion): void {
   }
   localStorage.setItem(OUTFITS_KEY, JSON.stringify(outfits.slice(0, 90)))
 }
+
+// ── Styles cache ───────────────────────────────────────────────────────────
+const STYLES_KEY = 'daily-stylist-styles'
+import type { StyleImage } from '../types'
+
+export function getStyles(): StyleImage[] {
+  try {
+    return JSON.parse(localStorage.getItem(STYLES_KEY) || '[]')
+  } catch { return [] }
+}
+export function saveStyles(styles: StyleImage[]): void {
+  // Cap at 50 to keep localStorage small
+  localStorage.setItem(STYLES_KEY, JSON.stringify(styles.slice(0, 50)))
+}
+
+// ── Cloud snapshot (full replace, used after cloud sync) ───────────────────
+export function saveOutfitsSnapshot(outfits: OutfitSuggestion[]): void {
+  localStorage.setItem(OUTFITS_KEY, JSON.stringify(outfits.slice(0, 90)))
+}

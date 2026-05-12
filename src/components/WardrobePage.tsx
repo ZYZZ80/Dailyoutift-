@@ -5,6 +5,7 @@ import { exportBackup, importBackup, removeClothingItem, type AppConfig } from '
 import { removeItemCloud, addItemCloud } from '../lib/cloud'
 import { needsWash as itemNeedsWash } from '../lib/laundry'
 import UploadModal from './UploadModal'
+import Img from './Img'
 
 interface Props {
   wardrobe: ClothingItem[]
@@ -150,7 +151,7 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
             return (
               <div key={item.id} className={`bg-white rounded-2xl overflow-hidden shadow-sm border group ${needsWash ? 'border-amber-200' : 'border-gray-100'}`}>
                 <div className="relative aspect-square bg-gray-50">
-                  <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                  <Img src={item.image} alt={item.name} thumb={300} className="w-full h-full object-cover" />
                   {/* Wear dots */}
                   <div className="absolute bottom-2 left-2 flex gap-1">
                     {[0, 1].map((i) => (

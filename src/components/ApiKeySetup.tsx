@@ -3,7 +3,7 @@ import { Key, Cpu, Zap, CheckCircle, XCircle, Loader2, Cloud, Sparkles } from 'l
 import { saveConfig, type AppConfig } from '../lib/storage'
 import { saveConfigCloud } from '../lib/cloud'
 import { testGeminiKey, checkProxy } from '../lib/claude'
-import { FIREBASE_ENABLED } from '../lib/firebase'
+import { SUPABASE_ENABLED } from '../lib/supabase'
 
 interface Props {
   onSaved: () => void
@@ -213,7 +213,7 @@ export default function ApiKeySetup({ onSaved, userId }: Props) {
 
         {error && <p className="text-red-400 text-xs mb-3">{error}</p>}
 
-        {FIREBASE_ENABLED && userId && (
+        {SUPABASE_ENABLED && userId && (
           <div className="flex items-center justify-center gap-1.5 text-xs text-green-600 bg-green-50 rounded-xl px-3 py-2 mb-3">
             <Cloud className="w-3.5 h-3.5 flex-shrink-0" />
             Key will be saved to your account — no need to re-enter on other devices

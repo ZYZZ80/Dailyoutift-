@@ -1,21 +1,48 @@
-﻿import { useState, useEffect, useCallback, useRef } from 'react'
+﻿import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { Images, Shirt, Sparkles, History, Settings, Menu, X, LogOut, Loader2, CalendarDays, Wand2, ShoppingBag } from 'lucide-react'
-import { getConfig, getWardrobe, saveConfig, type AppConfig } from './lib/storage'
+import { getConfig, getWardrobe, saveConfig, getOutfits, getStyles, saveWardrobe, saveOutfitsSnapshot, saveStyles, type AppConfig } from './lib/storage'
 import { supabase, SUPABASE_ENABLED } from './lib/supabase'
 import type { User } from '@supabase/supabase-js'
 import { checkProxy } from './lib/claude'
 import { importLocalWardrobeToCloud, removeStyleCloud, saveConfigCloud, subscribeToUserData } from './lib/cloud'
 import type { ClothingItem, OutfitSuggestion, StyleImage } from './types'
-import ApiKeySetup from './components/ApiKeySetup'
-import WardrobePage from './components/WardrobePage'
-import DailyOutfitPage from './components/DailyOutfitPage'
-import DashboardPage from './components/DashboardPage'
-import HistoryPage from './components/HistoryPage'
-import WeekPlanPage from './components/WeekPlanPage'
-import OutfitBuilderPage from './components/OutfitBuilderPage'
-import StylesPage from './components/StylesPage'
-import TryOnPage from './components/TryOnPage'
 import LoginPage from './components/LoginPage'
+import GenerationStatusBar from './components/GenerationStatusBar'
+
+// Lazy-load every heavy page. Each chunk is tiny (1-13 KB) so loading the
+// first one is fast; we then preload the rest on idle so subsequent tab
+// switches feel instant without ever showing a loading state again.
+const importApiKeySetup       = () => import('./components/ApiKeySetup')
+const importWardrobePage      = () => import('./components/WardrobePage')
+const importDailyOutfitPage   = () => import('./components/DailyOutfitPage')
+const importDashboardPage     = () => import('./components/DashboardPage')
+const importHistoryPage       = () => import('./components/HistoryPage')
+const importWeekPlanPage      = () => import('./components/WeekPlanPage')
+const importOutfitBuilderPage = () => import('./components/OutfitBuilderPage')
+const importStylesPage        = () => import('./components/StylesPage')
+const importTryOnPage         = () => import('./components/TryOnPage')
+
+const ApiKeySetup       = lazy(importApiKeySetup)
+const WardrobePage      = lazy(importWardrobePage)
+const DailyOutfitPage   = lazy(importDailyOutfitPage)
+const DashboardPage     = lazy(importDashboardPage)
+const HistoryPage       = lazy(importHistoryPage)
+const WeekPlanPage      = lazy(importWeekPlanPage)
+const OutfitBuilderPage = lazy(importOutfitBuilderPage)
+const StylesPage        = lazy(importStylesPage)
+const TryOnPage         = lazy(importTryOnPage)
+
+// Preload page chunks on idle so tab switches don't show Suspense fallback.
+function preloadAllPages() {
+  const idle = (cb: () => void) => {
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback
+    if (ric) ric(cb)
+    else setTimeout(cb, 200)
+  }
+  idle(() => { importDashboardPage(); importDailyOutfitPage(); importWardrobePage() })
+  idle(() => { importStylesPage(); importHistoryPage(); importTryOnPage() })
+  idle(() => { importOutfitBuilderPage(); importWeekPlanPage() })
+}
 
 type Tab = 'dashboard' | 'today' | 'wardrobe' | 'week' | 'history' | 'build' | 'styles' | 'tryon'
 function isConfigured(c: AppConfig) {
@@ -31,9 +58,12 @@ function getInitials(name: string | null | undefined): string {
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(() => getConfig())
   const [tab, setTab] = useState<Tab>('dashboard')
-  const [wardrobe, setWardrobe] = useState<ClothingItem[]>([])
-  const [outfits, setOutfits] = useState<OutfitSuggestion[]>([])
-  const [styles, setStyles] = useState<StyleImage[]>([])
+  // Initialize from localStorage so the dashboard renders INSTANTLY on first
+  // paint with cached data, then cloud sync silently updates it. This is what
+  // makes the app feel "snappy" like the other dashboards.
+  const [wardrobe, setWardrobe] = useState<ClothingItem[]>(() => getWardrobe())
+  const [outfits, setOutfits] = useState<OutfitSuggestion[]>(() => getOutfits())
+  const [styles, setStyles] = useState<StyleImage[]>(() => getStyles())
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [user, setUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(SUPABASE_ENABLED)
@@ -53,6 +83,7 @@ export default function App() {
   useEffect(() => {
     if (proxyChecked.current) return
     proxyChecked.current = true
+    preloadAllPages() // warm all the lazy chunks on idle for instant tab switches
     const cur = getConfig()
     if (isConfigured(cur)) return
     checkProxy().then((ok) => { if (ok) { const pc = { ...cur, provider: 'proxy' as const }; saveConfig(pc); setConfig(pc) } })
@@ -60,18 +91,48 @@ export default function App() {
 
   useEffect(() => {
     if (!SUPABASE_ENABLED || !supabase) { setAuthLoading(false); return }
-    // Get initial session
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null)
+
+    // Auth listener — only update user identity, NEVER touch loading flags here.
+    // Token refresh fires this every hour; if we set cloudLoading=true on that,
+    // the user gets a full-screen "refresh" flash for no reason.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      // Ignore noisy refresh events that don't change identity
+      if (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') return
+      setUser((prev) => (prev?.id === session?.user?.id ? prev : (session?.user ?? null)))
       setAuthLoading(false)
-      setCloudLoading(!!data.session?.user)
     })
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
+
+    // Handle OAuth redirect / fetch existing session
+    const url = new URL(window.location.href)
+    const code = url.searchParams.get('code')
+    const hashParams = new URLSearchParams(url.hash.replace(/^#/, ''))
+    const hashAccessToken = hashParams.get('access_token')
+    const errParam = url.searchParams.get('error_description') || hashParams.get('error_description')
+
+    if (errParam) {
+      console.error('OAuth error:', errParam)
+      window.history.replaceState({}, document.title, url.origin + url.pathname)
       setAuthLoading(false)
-      setCloudLoading(!!session?.user)
-    })
+    } else if (hashAccessToken) {
+      supabase.auth.getSession().then(({ data }) => {
+        window.history.replaceState({}, document.title, url.origin + url.pathname)
+        setUser(data.session?.user ?? null)
+        setAuthLoading(false)
+      })
+    } else if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ data, error }) => {
+        if (error) console.error('Code exchange failed:', error.message)
+        window.history.replaceState({}, document.title, url.origin + url.pathname)
+        setUser(data?.session?.user ?? null)
+        setAuthLoading(false)
+      })
+    } else {
+      supabase.auth.getSession().then(({ data }) => {
+        setUser(data.session?.user ?? null)
+        setAuthLoading(false)
+      })
+    }
+
     return () => subscription.unsubscribe()
   }, [])
 
@@ -84,28 +145,40 @@ export default function App() {
       return
     }
 
+    // Only show "Loading your cloud wardrobe" on the FIRST fetch. After that,
+    // realtime updates and reconnections refresh data silently in place.
+    let firstFetch = true
     setCloudLoading(true)
     const unsub = subscribeToUserData(
-      user.uid,
+      user.id,
       (data) => {
         if (data.wardrobe !== undefined) {
           const cloudItems = data.wardrobe ?? []
-          // Merge: show cloud items + any local-only items not yet synced
           const local = getWardrobe()
           const localOnly = local.filter((li) => !cloudItems.some((ci) => ci.id === li.id))
 
-          // If cloud is empty but we have local items → auto-import silently
           if (cloudItems.length === 0 && local.length > 0) {
-            importLocalWardrobeToCloud(user.uid, local).catch(() => {})
+            importLocalWardrobeToCloud(user.id, local).catch(() => {})
           }
 
-          // Always show the union so nothing disappears while syncing
-          setWardrobe(cloudItems.length > 0 ? cloudItems : local)
+          const finalWardrobe = cloudItems.length > 0 ? cloudItems : local
+          setWardrobe(finalWardrobe)
           setLocalImportItems(localOnly)
+          // Persist for instant first-paint next time
+          saveWardrobe(finalWardrobe)
         }
-        if (data.outfits) setOutfits(data.outfits)
-        if (data.styles) setStyles(data.styles)
-        setCloudLoading(false)
+        if (data.outfits) {
+          setOutfits(data.outfits)
+          saveOutfitsSnapshot(data.outfits)
+        }
+        if (data.styles) {
+          setStyles(data.styles)
+          saveStyles(data.styles)
+        }
+        if (firstFetch) {
+          setCloudLoading(false)
+          firstFetch = false
+        }
       },
       () => {
         // Firebase error — fall back to localStorage so wardrobe is never blank
@@ -115,7 +188,7 @@ export default function App() {
     )
 
     const localConfig = getConfig()
-    if (isConfigured(localConfig)) saveConfigCloud(user.uid, localConfig).catch(() => {})
+    if (isConfigured(localConfig)) saveConfigCloud(user.id, localConfig).catch(() => {})
 
     return unsub
   }, [user])
@@ -125,7 +198,7 @@ export default function App() {
     setImportingLocal(true)
     setImportMsg('')
     try {
-      const count = await importLocalWardrobeToCloud(user.uid, localImportItems)
+      const count = await importLocalWardrobeToCloud(user.id, localImportItems)
       setImportMsg(`Imported ${count} local wardrobe item${count === 1 ? '' : 's'} to cloud.`)
       setLocalImportItems([])
     } catch (e) {
@@ -136,11 +209,11 @@ export default function App() {
   }
 
   function handleDeleteStyle(styleId: string) {
-    if (user) removeStyleCloud(user.uid, styleId).catch(() => {})
+    if (user) removeStyleCloud(user.id, styleId).catch(() => {})
     setStyles((prev) => prev.filter((s) => s.id !== styleId))
   }
   function handleReset() { saveConfig({ provider: 'openai', apiKey: '', ollamaUrl: 'http://localhost:11434', ollamaModel: 'moondream' }); setConfig(getConfig()) }
-  async function handleSignOut() { if (auth) await signOut(auth); setUser(null) }
+  async function handleSignOut() { if (supabase) await supabase.auth.signOut(); setUser(null) }
 
   if (authLoading) return (
     <div className="min-h-screen bg-cream flex items-center justify-center">
@@ -151,21 +224,17 @@ export default function App() {
     </div>
   )
 
-  if (!user) return <LoginPage onLogin={(u) => setUser(u)} />
-  if (cloudLoading) return (
-    <div className="min-h-screen bg-cream flex items-center justify-center">
-      <div className="text-center space-y-3">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-300 mx-auto" />
-        <p className="text-sm text-gray-400">Loading your cloud wardrobe...</p>
-      </div>
-    </div>
+  if (!user) return <LoginPage />
+  if (!isConfigured(config)) return (
+    <Suspense fallback={<div className="min-h-screen bg-cream flex items-center justify-center"><Loader2 className="w-5 h-5 animate-spin text-gray-300" /></div>}>
+      <ApiKeySetup onSaved={() => setConfig(getConfig())} userId={user?.id} />
+    </Suspense>
   )
-  if (!isConfigured(config)) return <ApiKeySetup onSaved={() => setConfig(getConfig())} userId={user?.uid} />
 
   const today = new Date().toISOString().split('T')[0]
   const todayOutfit = outfits.find((o) => o.date === today) ?? null
-  const userName: string = user?.displayName ?? 'You'
-  const userPhoto: string | null = user?.photoURL ?? null
+  const userName: string = user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? 'You'
+  const userPhoto: string | null = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null
   const needsWashCount = wardrobe.filter((i) => (i.wearCount ?? 0) >= 2).length
 
   // Derive extra styles from outfits that have a previewImage but no matching style doc
@@ -188,23 +257,31 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: <Sparkles className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'today',    label: 'Today',    icon: <Sparkles className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'wardrobe', label: 'Wardrobe', icon: <Shirt className="w-5 h-5" strokeWidth={1.5} />, badge: needsWashCount > 0 ? needsWashCount : undefined },
-    { id: 'tryon',    label: 'Try On',   icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
-    { id: 'build',    label: 'Build',    icon: <Wand2 className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'tryon',    label: 'Try Buy',  icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'build',    label: 'Builder',  icon: <Wand2 className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'styles',   label: 'Styles',   icon: <Images className="w-5 h-5" strokeWidth={1.5} />, badge: styleCount > 0 ? styleCount : undefined },
     { id: 'week',     label: 'Week',     icon: <CalendarDays className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'history',  label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} /> },
   ]
 
-  const pageContent = (<>
-    {tab === 'dashboard' && <DashboardPage wardrobe={wardrobe} outfits={outfits} styles={allStyles} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.uid} onOpenTab={setTab} />}
-    {tab === 'today' && <DailyOutfitPage wardrobe={wardrobe} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.uid} />}
-    {tab === 'wardrobe' && <WardrobePage wardrobe={wardrobe} config={config} onUpdate={refresh} userId={user?.uid} />}
-    {tab === 'build' && <OutfitBuilderPage wardrobe={wardrobe} config={config} userId={user?.uid} />}
-    {tab === 'tryon' && <TryOnPage config={config} userId={user?.uid} onSaved={refresh} />}
-    {tab === 'styles' && <StylesPage styles={allStyles} wardrobe={wardrobe} onDelete={handleDeleteStyle} />}
-    {tab === 'week' && <WeekPlanPage wardrobe={wardrobe} outfits={outfits} config={config} onUpdate={refresh} userId={user?.uid} />}
-    {tab === 'history' && <HistoryPage styles={allStyles} onDelete={handleDeleteStyle} />}
-  </>)
+  const PageFallback = (
+    <div className="flex items-center justify-center py-20">
+      <Loader2 className="w-5 h-5 animate-spin text-gray-300" />
+    </div>
+  )
+
+  const pageContent = (
+    <Suspense fallback={PageFallback}>
+      {tab === 'dashboard' && <DashboardPage wardrobe={wardrobe} outfits={outfits} styles={allStyles} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} onOpenTab={setTab} />}
+      {tab === 'today' && <DailyOutfitPage wardrobe={wardrobe} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} />}
+      {tab === 'wardrobe' && <WardrobePage wardrobe={wardrobe} config={config} onUpdate={refresh} userId={user?.id} />}
+      {tab === 'build' && <OutfitBuilderPage wardrobe={wardrobe} config={config} userId={user?.id} />}
+      {tab === 'tryon' && <TryOnPage config={config} userId={user?.id} onSaved={refresh} />}
+      {tab === 'styles' && <StylesPage styles={allStyles} wardrobe={wardrobe} onDelete={handleDeleteStyle} />}
+      {tab === 'week' && <WeekPlanPage wardrobe={wardrobe} outfits={outfits} config={config} onUpdate={refresh} userId={user?.id} />}
+      {tab === 'history' && <HistoryPage styles={allStyles} onDelete={handleDeleteStyle} />}
+    </Suspense>
+  )
 
   function SidebarContent({ onClose }: { onClose?: () => void }) {
     return (<>
@@ -213,7 +290,7 @@ export default function App() {
         <div className="flex-1 min-w-0"><p className="font-semibold text-white text-sm leading-none">Daily Stylist</p><p className="text-[10px] text-white/40 mt-0.5">{PROVIDER_LABELS[config.provider]}</p></div>
         {onClose && <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg flex-shrink-0"><X className="w-4 h-4 text-white/60" /></button>}
       </div>
-      {(user || !FIREBASE_ENABLED) && (
+      {(user || !SUPABASE_ENABLED) && (
         <div className="px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-3">
             {userPhoto ? <img src={userPhoto} alt={userName} className="w-8 h-8 rounded-full object-cover" /> : <div className="w-8 h-8 rounded-full bg-blush/40 flex items-center justify-center flex-shrink-0"><span className="text-xs font-bold text-white">{getInitials(userName)}</span></div>}
@@ -233,13 +310,19 @@ export default function App() {
       </nav>
       <div className="p-3 border-t border-white/10 space-y-1">
         <button onClick={handleReset} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-white/70 transition-colors"><Settings className="w-4 h-4" />Change Provider</button>
-        {FIREBASE_ENABLED && user && <button onClick={handleSignOut} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-red-400 transition-colors"><LogOut className="w-4 h-4" />Sign Out</button>}
+        {SUPABASE_ENABLED && user && <button onClick={handleSignOut} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-red-400 transition-colors"><LogOut className="w-4 h-4" />Sign Out</button>}
       </div>
     </>)
   }
 
   return (
     <div className="min-h-screen bg-cream">
+      <GenerationStatusBar onJump={(origin) => setTab(origin === 'today' ? 'today' : origin)} />
+      {cloudLoading && (
+        <div className="fixed top-0 inset-x-0 h-0.5 bg-blush/40 overflow-hidden z-40">
+          <div className="h-full w-1/3 bg-blush animate-progress-slide" />
+        </div>
+      )}
       {user && localImportItems.length > 0 && !importBannerDismissed && (
         <div className="bg-amber-50 border-b border-amber-100 px-4 py-3 text-amber-800">
           <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
@@ -283,7 +366,7 @@ export default function App() {
         <main className="max-w-2xl mx-auto px-4 py-6 pb-28">{pageContent}</main>
         <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-100 z-40 safe-bottom">
           <div className="max-w-2xl mx-auto px-2 flex">
-            {NAV_ITEMS.filter((i) => ['dashboard','today','wardrobe','tryon','build'].includes(i.id)).map((item) => (
+            {NAV_ITEMS.filter((i) => ['today','wardrobe','tryon','styles','build'].includes(i.id)).map((item) => (
               <button key={item.id} onClick={() => setTab(item.id)}
                 className={`flex-1 flex flex-col items-center gap-1 py-3 relative transition-colors ${tab === item.id ? 'text-charcoal' : 'text-gray-400 hover:text-gray-600'}`}>
                 {item.icon}

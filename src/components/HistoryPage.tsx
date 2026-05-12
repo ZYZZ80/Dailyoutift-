@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Download, ImageOff, Trash2, X } from 'lucide-react'
 import type { StyleImage } from '../types'
+import Img from './Img'
 
 interface Props {
   styles: StyleImage[]
@@ -50,7 +51,7 @@ export default function HistoryPage({ styles, onDelete }: Props) {
         {styles.map((style) => (
           <div key={style.id} className="relative rounded-2xl overflow-hidden bg-gray-50 border border-gray-100 shadow-sm">
             <button onClick={() => setExpandedImage(style.image)} className="block w-full">
-              <img src={style.image} alt="Generated style" className="w-full aspect-[4/5] object-cover" />
+              <Img src={style.image} alt="Generated style" thumb={400} className="w-full aspect-[4/5] object-cover" />
             </button>
             <div className="absolute top-2 right-2 flex flex-col gap-1.5">
               <button

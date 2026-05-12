@@ -2,6 +2,7 @@ import { CalendarDays, History, Images, Shirt, Sparkles, Wand2 } from 'lucide-re
 import type { ClothingItem, OutfitSuggestion, StyleImage } from '../types'
 import type { AppConfig } from '../lib/storage'
 import DailyOutfitPage from './DailyOutfitPage'
+import Img from './Img'
 
 interface Props {
   wardrobe: ClothingItem[]
@@ -88,7 +89,7 @@ export default function DashboardPage({
             <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
               {recentStyles.map((style) => (
                 <button key={style.id} onClick={() => onOpenTab('styles')} className="aspect-square rounded-xl overflow-hidden bg-gray-50">
-                  <img src={style.image} alt="Generated style" className="w-full h-full object-cover" />
+                  <Img src={style.image} alt="Generated style" thumb={400} className="w-full h-full object-cover" />
                 </button>
               ))}
             </div>

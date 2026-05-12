@@ -1,19 +1,24 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? ''
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? ''
-
-export const SUPABASE_ENABLED = !!(supabaseUrl && supabaseAnonKey)
+export const SUPABASE_ENABLED = !!(
+  import.meta.env.VITE_SUPABASE_URL &&
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+)
 
 export const supabase = SUPABASE_ENABLED
-  ? createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    })
+  ? createClient(
+      import.meta.env.VITE_SUPABASE_URL as string,
+      import.meta.env.VITE_SUPABASE_ANON_KEY as string,
+      {
+        auth: {
+          autoRefreshToken: true,
+          persistSession: true,
+          detectSessionInUrl: true,
+          // Implicit flow: tokens come back in URL hash. No PKCE verifier
+          // needed in localStorage, which avoids "OAuth state has expired"
+          // on iOS PWA where storage isn't shared across the OAuth redirect.
+          flowType: 'implicit',
+        },
+      }
+    )
   : null
-
-// Compatibility flag — older imports
-export const FIREBASE_ENABLED = SUPABASE_ENABLED

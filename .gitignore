@@ -4,3 +4,9 @@ dist
 .env
 *.local
 wardrobe-backup.json
+.env*.local
+# Secrets — never commit
+daily-stylist-aziz-firebase-adminsdk-*.json
+sb-service-role.txt
+.env.production
+firebase-key.json

@@ -1,5 +1,6 @@
 import { Download, ImageOff, Images, Sparkles, Trash2 } from 'lucide-react'
 import type { ClothingItem, StyleImage } from '../types'
+import Img from './Img'
 
 interface Props {
   styles: StyleImage[]
@@ -52,7 +53,7 @@ export default function StylesPage({ styles, wardrobe, onDelete }: Props) {
           return (
             <div key={style.id} className="bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm">
               <div className="relative bg-gray-50">
-                <img src={style.image} alt="Saved generated style" className="w-full aspect-[4/5] object-cover" />
+                <Img src={style.image} alt="Saved generated style" thumb={500} className="w-full aspect-[4/5] object-cover" />
                 <div className="absolute top-2 left-2 inline-flex items-center gap-1.5 bg-white/90 text-charcoal px-2 py-1 rounded-full text-[10px] font-medium shadow-sm">
                   <Sparkles className="w-3 h-3 text-blush" />
                   {SOURCE_LABEL[style.source]}
@@ -89,7 +90,7 @@ export default function StylesPage({ styles, wardrobe, onDelete }: Props) {
                   <div className="flex gap-2 overflow-x-auto pb-1">
                     {items.map((item) => (
                       <div key={item.id} className="flex-shrink-0 w-12">
-                        <img src={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover border border-gray-100" />
+                        <Img src={item.image} alt={item.name} thumb={100} className="w-12 h-12 rounded-xl object-cover border border-gray-100" />
                         <p className="text-[9px] text-gray-400 mt-1 truncate text-center">{item.name}</p>
                       </div>
                     ))}
