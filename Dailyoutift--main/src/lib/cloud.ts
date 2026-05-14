@@ -1,14 +1,9 @@
 /**
- * Cloud sync layer — Firestore + Firebase Storage
- * All functions are no-ops if Firebase is not configured.
+ * Cloud sync layer — Supabase Database + Storage
+ * All functions are no-ops if Supabase is not configured.
  */
-import {
-  collection, doc, setDoc, deleteDoc, getDocs,
-  getDoc, query, orderBy, limit, onSnapshot,
-} from 'firebase/firestore'
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
-import { db, storage, FIREBASE_ENABLED } from './firebase'
-import type { ClothingItem, OutfitSuggestion } from '../types'
+import { supabase, SUPABASE_ENABLED } from './supabase'
+import type { ClothingItem, ClothingCategory } from '../types'
 import type { AppConfig } from './storage'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -27,63 +22,159 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   finally { if (timer) clearTimeout(timer) }
 }
 
+// ── Row mappers ───────────────────────────────────────────────────────────────
+
+type DbRow = Record<string, unknown>
+
+function toDbItem(userId: string, item: ClothingItem): DbRow {
+  return {
+    id: item.id,
+    user_id: userId,
+    name: item.name,
+    category: item.category,
+    color: item.color,
+    image: item.image,
+    tags: item.tags,
+    uploaded_at: item.uploadedAt,
+    wear_count: item.wearCount ?? 0,
+    last_worn: item.lastWorn ?? null,
+  }
+}
+
+function fromDbItem(row: DbRow): ClothingItem {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    category: row.category as ClothingCategory,
+    color: (row.color as string) ?? '',
+    image: (row.image as string) ?? '',
+    tags: (row.tags as string[]) ?? [],
+    uploadedAt: (row.uploaded_at as string) ?? new Date().toISOString(),
+    wearCount: (row.wear_count as number) ?? 0,
+    lastWorn: row.last_worn as string | undefined,
+  }
+}
+
+function toDbOutfit(userId: string, outfit: import('../types').OutfitSuggestion): DbRow {
+  return {
+    id: outfit.id,
+    user_id: userId,
+    date: outfit.date,
+    item_ids: outfit.itemIds,
+    description: outfit.description,
+    style_notes: outfit.styleNotes,
+    occasion: outfit.occasion,
+    generated_at: outfit.generatedAt,
+    preview_image: outfit.previewImage ?? null,
+  }
+}
+
+function fromDbOutfit(row: DbRow): import('../types').OutfitSuggestion {
+  return {
+    id: row.id as string,
+    date: row.date as string,
+    itemIds: (row.item_ids as string[]) ?? [],
+    description: (row.description as string) ?? '',
+    styleNotes: (row.style_notes as string) ?? '',
+    occasion: (row.occasion as string) ?? 'Casual',
+    generatedAt: (row.generated_at as string) ?? new Date().toISOString(),
+    previewImage: row.preview_image as string | undefined,
+  }
+}
+
+function toDbConfig(userId: string, config: AppConfig): DbRow {
+  return {
+    user_id: userId,
+    provider: config.provider,
+    api_key: config.apiKey,
+    ollama_url: config.ollamaUrl,
+    ollama_model: config.ollamaModel,
+  }
+}
+
+function fromDbConfig(row: DbRow): AppConfig {
+  return {
+    provider: (row.provider as AppConfig['provider']) ?? 'proxy',
+    apiKey: (row.api_key as string) ?? '',
+    ollamaUrl: (row.ollama_url as string) ?? 'http://localhost:11434',
+    ollamaModel: (row.ollama_model as string) ?? 'moondream',
+  }
+}
+
 // ── Image upload ──────────────────────────────────────────────────────────────
 
-/** Upload a clothing item image to Storage. Returns download URL (or original base64 on failure). */
+/** Upload a clothing item image to Storage. Returns public URL (or original base64 on failure). */
 export async function uploadClothingImage(
   userId: string,
   itemId: string,
   base64: string,
 ): Promise<string> {
-  if (!FIREBASE_ENABLED || !storage) return base64
+  if (!SUPABASE_ENABLED || !supabase) return base64
   const blob = await base64ToBlob(base64)
-  const storageRef = ref(storage, `users/${userId}/wardrobe/${itemId}.jpg`)
+  const path = `${userId}/${itemId}.jpg`
   try {
-    await withTimeout(uploadBytes(storageRef, blob, { contentType: 'image/jpeg' }), 15000, 'Image upload')
-    return await withTimeout(getDownloadURL(storageRef), 8000, 'Image URL')
+    const upload = supabase.storage.from('wardrobe').upload(path, blob, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    })
+    await withTimeout(upload, 15000, 'Image upload')
+    const { data } = supabase.storage.from('wardrobe').getPublicUrl(path)
+    return data.publicUrl
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    throw new Error(`Firebase Storage failed: ${msg}. Check Storage rules and bucket.`)
+    throw new Error(`Supabase Storage failed: ${msg}`)
   }
 }
 
-/** Upload profile photo. Returns download URL. */
+/** Upload profile photo. Returns public URL. */
 export async function uploadProfilePhoto(userId: string, base64: string): Promise<string> {
-  if (!FIREBASE_ENABLED || !storage) return base64
+  if (!SUPABASE_ENABLED || !supabase) return base64
   const blob = await base64ToBlob(base64)
-  const storageRef = ref(storage, `users/${userId}/profile.jpg`)
+  const path = `${userId}/profile.jpg`
   try {
-    await withTimeout(uploadBytes(storageRef, blob, { contentType: 'image/jpeg' }), 15000, 'Profile upload')
-    return await withTimeout(getDownloadURL(storageRef), 8000, 'Profile URL')
+    const upload = supabase.storage.from('profile').upload(path, blob, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    })
+    await withTimeout(upload, 15000, 'Profile upload')
+    const { data } = supabase.storage.from('profile').getPublicUrl(path)
+    return data.publicUrl
   } catch {
     return base64
   }
 }
 
-/** Get profile photo URL from Storage. */
+/** Get profile photo public URL from Storage. */
 export async function getProfilePhotoCloud(userId: string): Promise<string> {
-  if (!FIREBASE_ENABLED || !storage) return ''
+  if (!SUPABASE_ENABLED || !supabase) return ''
   try {
-    return await getDownloadURL(ref(storage, `users/${userId}/profile.jpg`))
+    const { data } = supabase.storage.from('profile').getPublicUrl(`${userId}/profile.jpg`)
+    // Verify the object exists with a lightweight HEAD request
+    const res = await fetch(data.publicUrl, { method: 'HEAD' })
+    return res.ok ? data.publicUrl : ''
   } catch {
     return ''
   }
 }
 
-
-/** Upload generated style / try-on image to Storage. Returns download URL. */
+/** Upload generated style / try-on image to Storage. Returns public URL. */
 export async function uploadStylePreviewImage(
   userId: string,
   outfitId: string,
   imageDataUrl: string,
 ): Promise<string> {
-  if (!FIREBASE_ENABLED || !storage) return imageDataUrl
+  if (!SUPABASE_ENABLED || !supabase) return imageDataUrl
   if (!imageDataUrl.startsWith('data:')) return imageDataUrl
   const blob = await base64ToBlob(imageDataUrl)
-  const storageRef = ref(storage, `users/${userId}/style-previews/${outfitId}.png`)
+  const path = `${userId}/${outfitId}.png`
   try {
-    await withTimeout(uploadBytes(storageRef, blob, { contentType: blob.type || 'image/png' }), 20000, 'Style image upload')
-    return await withTimeout(getDownloadURL(storageRef), 8000, 'Style image URL')
+    const upload = supabase.storage.from('styles').upload(path, blob, {
+      contentType: blob.type || 'image/png',
+      upsert: true,
+    })
+    await withTimeout(upload, 20000, 'Style image upload')
+    const { data } = supabase.storage.from('styles').getPublicUrl(path)
+    return data.publicUrl
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     throw new Error(`Style image upload failed: ${msg}`)
@@ -93,57 +184,66 @@ export async function uploadStylePreviewImage(
 // ── Wardrobe ──────────────────────────────────────────────────────────────────
 
 export async function addItemCloud(userId: string, item: ClothingItem): Promise<void> {
-  if (!FIREBASE_ENABLED || !db) return
-  await setDoc(doc(db, 'users', userId, 'wardrobe', item.id), item)
+  if (!SUPABASE_ENABLED || !supabase) return
+  await supabase.from('wardrobe_items').upsert(toDbItem(userId, item))
 }
 
 export async function removeItemCloud(userId: string, itemId: string): Promise<void> {
-  if (!FIREBASE_ENABLED || !db) return
-  await deleteDoc(doc(db, 'users', userId, 'wardrobe', itemId))
+  if (!SUPABASE_ENABLED || !supabase) return
+  await supabase.from('wardrobe_items').delete().eq('id', itemId).eq('user_id', userId)
 }
 
 export async function getWardrobeCloud(userId: string): Promise<ClothingItem[]> {
-  if (!FIREBASE_ENABLED || !db) return []
-  const snap = await getDocs(collection(db, 'users', userId, 'wardrobe'))
-  return snap.docs.map((d) => d.data() as ClothingItem)
+  if (!SUPABASE_ENABLED || !supabase) return []
+  const { data } = await supabase.from('wardrobe_items').select('*').eq('user_id', userId)
+  return (data ?? []).map(fromDbItem)
 }
 
 // ── Outfits ───────────────────────────────────────────────────────────────────
 
-export async function saveOutfitCloud(userId: string, outfit: OutfitSuggestion): Promise<void> {
-  if (!FIREBASE_ENABLED || !db) return
-  await setDoc(doc(db, 'users', userId, 'outfits', outfit.id), outfit)
+export async function saveOutfitCloud(
+  userId: string,
+  outfit: import('../types').OutfitSuggestion,
+): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  await supabase.from('outfits').upsert(toDbOutfit(userId, outfit))
 }
 
-export async function getOutfitsCloud(userId: string): Promise<OutfitSuggestion[]> {
-  if (!FIREBASE_ENABLED || !db) return []
-  const q = query(
-    collection(db, 'users', userId, 'outfits'),
-    orderBy('date', 'desc'),
-    limit(90),
-  )
-  const snap = await getDocs(q)
-  return snap.docs.map((d) => d.data() as OutfitSuggestion)
+export async function getOutfitsCloud(
+  userId: string,
+): Promise<import('../types').OutfitSuggestion[]> {
+  if (!SUPABASE_ENABLED || !supabase) return []
+  const { data } = await supabase
+    .from('outfits')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: false })
+    .limit(90)
+  return (data ?? []).map(fromDbOutfit)
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 export async function saveConfigCloud(userId: string, config: AppConfig): Promise<void> {
-  if (!FIREBASE_ENABLED || !db) return
-  await setDoc(doc(db, 'users', userId, 'settings', 'main'), config)
+  if (!SUPABASE_ENABLED || !supabase) return
+  await supabase.from('user_settings').upsert(toDbConfig(userId, config))
 }
 
 export async function getConfigCloud(userId: string): Promise<AppConfig | null> {
-  if (!FIREBASE_ENABLED || !db) return null
-  const snap = await getDoc(doc(db, 'users', userId, 'settings', 'main'))
-  return snap.exists() ? (snap.data() as AppConfig) : null
+  if (!SUPABASE_ENABLED || !supabase) return null
+  const { data } = await supabase
+    .from('user_settings')
+    .select('*')
+    .eq('user_id', userId)
+    .single()
+  return data ? fromDbConfig(data as DbRow) : null
 }
 
 // ── Full sync (cloud → local) ─────────────────────────────────────────────────
 
 export interface CloudSnapshot {
   wardrobe: ClothingItem[]
-  outfits: OutfitSuggestion[]
+  outfits: import('../types').OutfitSuggestion[]
   config: AppConfig | null
   profilePhoto: string
 }
@@ -158,47 +258,65 @@ export async function syncFromCloud(userId: string): Promise<CloudSnapshot> {
   return { wardrobe, outfits, config, profilePhoto }
 }
 
-
 // ── Live sync (same account across PC / iPad) ─────────────────────────────────
 
-export function subscribeToCloud(userId: string, onData: (snapshot: CloudSnapshot) => void): () => void {
-  if (!FIREBASE_ENABLED || !db) return () => {}
+export function subscribeToCloud(
+  userId: string,
+  onData: (snapshot: CloudSnapshot) => void,
+): () => void {
+  if (!SUPABASE_ENABLED || !supabase) return () => {}
+  const sb = supabase
 
   let wardrobe: ClothingItem[] = []
-  let outfits: OutfitSuggestion[] = []
+  let outfits: import('../types').OutfitSuggestion[] = []
   let config: AppConfig | null = null
   let profilePhoto = ''
   let wardrobeLoaded = false
   let outfitsLoaded = false
 
-  // Avoid clearing local cache with partial empty snapshots while Firestore listeners are still starting.
   const emit = () => {
     if (!wardrobeLoaded || !outfitsLoaded) return
     onData({ wardrobe, outfits, config, profilePhoto })
   }
 
-  const unsubWardrobe = onSnapshot(collection(db, 'users', userId, 'wardrobe'), (snap) => {
-    wardrobe = snap.docs.map((d) => d.data() as ClothingItem)
-    wardrobeLoaded = true
-    emit()
-  })
+  const channel = sb
+    .channel(`user-${userId}`)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'wardrobe_items', filter: `user_id=eq.${userId}` },
+      async () => {
+        wardrobe = await getWardrobeCloud(userId)
+        wardrobeLoaded = true
+        emit()
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'outfits', filter: `user_id=eq.${userId}` },
+      async () => {
+        outfits = await getOutfitsCloud(userId)
+        outfitsLoaded = true
+        emit()
+      },
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'user_settings', filter: `user_id=eq.${userId}` },
+      async () => {
+        config = await getConfigCloud(userId)
+        emit()
+      },
+    )
+    .subscribe(async () => {
+      // Initial load once channel is ready
+      wardrobe = await getWardrobeCloud(userId)
+      wardrobeLoaded = true
+      outfits = await getOutfitsCloud(userId)
+      outfitsLoaded = true
+      config = await getConfigCloud(userId)
+      profilePhoto = await getProfilePhotoCloud(userId)
+      emit()
+    })
 
-  const outfitsQuery = query(collection(db, 'users', userId, 'outfits'), orderBy('date', 'desc'), limit(90))
-  const unsubOutfits = onSnapshot(outfitsQuery, (snap) => {
-    outfits = snap.docs.map((d) => d.data() as OutfitSuggestion)
-    outfitsLoaded = true
-    emit()
-  })
-
-  const unsubConfig = onSnapshot(doc(db, 'users', userId, 'settings', 'main'), (snap) => {
-    config = snap.exists() ? (snap.data() as AppConfig) : null
-    emit()
-  })
-
-  getProfilePhotoCloud(userId).then((url) => {
-    profilePhoto = url
-    emit()
-  }).catch(() => {})
-
-  return () => { unsubWardrobe(); unsubOutfits(); unsubConfig() }
+  return () => { sb.removeChannel(channel) }
 }

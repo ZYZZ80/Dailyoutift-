@@ -3,6 +3,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Global resets ── */
 * {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -11,7 +12,6 @@
 
 body {
   font-family: 'Inter', system-ui, sans-serif;
-  /* prevent iOS bounce scroll */
   overscroll-behavior: none;
 }
 
@@ -19,10 +19,43 @@ body {
   min-height: 100dvh;
 }
 
-/* iPhone notch / home bar safe areas */
+/* ── iOS safe areas ── */
 .safe-top {
   padding-top: env(safe-area-inset-top);
 }
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* ── Scrollbar utils ── */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Dark mode CSS variable foundation ──
+   Activated by .dark class on <html>, or by system preference when no class is set.
+   Components reference these vars so future dark-mode work is one-variable-per-token.  */
+:root {
+  --color-surface: #ffffff;
+  --color-surface-raised: #fdfcfb;
+  --color-surface-overlay: #f5f2ed;
+  --color-text-primary: #2c2c2c;
+  --color-text-secondary: #6b6b6b;
+  --color-border: #e8e4df;
+  --color-border-subtle: #f0ede8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --color-surface: #1c1c1e;
+    --color-surface-raised: #2c2c2e;
+    --color-surface-overlay: #3a3a3c;
+    --color-text-primary: #f2f2f7;
+    --color-text-secondary: #aeaeb2;
+    --color-border: #38383a;
+    --color-border-subtle: #2c2c2e;
+  }
 }

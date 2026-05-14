@@ -1,9 +1,12 @@
-import { useState, useRef } from 'react'
-import { Plus, Trash2, Tag, Download, Upload } from 'lucide-react'
+import { useState, useRef, memo } from 'react'
+import { Plus, Trash2, Tag, Download, Upload, RotateCcw } from 'lucide-react'
 import type { ClothingItem, ClothingCategory } from '../types'
+import { CLOTHING_CATEGORIES } from '../types'
 import { removeClothingItem, markWashed, exportBackup, importBackup, type AppConfig } from '../lib/storage'
 import { removeItemCloud, addItemCloud } from '../lib/cloud'
 import UploadModal from './UploadModal'
+import { Badge, Button, Card, EmptyState, Tabs } from './ui'
+import { useToast } from '../contexts/ToastContext'
 
 interface Props {
   wardrobe: ClothingItem[]
@@ -12,34 +15,109 @@ interface Props {
   userId?: string
 }
 
-const CATEGORY_COLORS: Record<ClothingCategory, string> = {
-  top: 'bg-blue-100 text-blue-700',
-  bottom: 'bg-purple-100 text-purple-700',
-  dress: 'bg-pink-100 text-pink-700',
-  shoes: 'bg-amber-100 text-amber-700',
-  accessory: 'bg-green-100 text-green-700',
-  outerwear: 'bg-gray-100 text-gray-700',
+interface ItemCardProps {
+  item: ClothingItem
+  onDelete: (id: string) => void
+  onWashed: (item: ClothingItem) => void
 }
 
-const FILTER_OPTIONS: (ClothingCategory | 'all' | 'wash')[] = ['all', 'wash', 'top', 'bottom', 'dress', 'shoes', 'accessory', 'outerwear']
+const WardrobeItemCard = memo(function WardrobeItemCard({ item, onDelete, onWashed }: ItemCardProps) {
+  const wears = item.wearCount ?? 0
+  const needsWash = wears >= 2
+
+  return (
+    <div
+      className={[
+        'bg-white rounded-2xl overflow-hidden border group transition-shadow hover:shadow-md',
+        needsWash ? 'border-warning/40' : 'border-[#E8E4DF]',
+      ].join(' ')}
+    >
+      <div className="relative aspect-square bg-surface-overlay">
+        <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+
+        {/* Wear count dots */}
+        <div
+          className="absolute bottom-2 left-2 flex gap-1"
+          aria-label={`Worn ${wears} of 2 times`}
+        >
+          {[0, 1].map((i) => (
+            <span
+              key={i}
+              aria-hidden="true"
+              className={['w-2 h-2 rounded-full', i < wears ? 'bg-warning' : 'bg-white/70'].join(' ')}
+            />
+          ))}
+        </div>
+
+        {/* Needs wash badge */}
+        {needsWash && (
+          <div className="absolute top-2 left-2">
+            <Badge variant="warning" size="sm" dot>
+              Wash
+            </Badge>
+          </div>
+        )}
+
+        {/* Delete button */}
+        <button
+          onClick={() => onDelete(item.id)}
+          aria-label={`Remove ${item.name}`}
+          className="absolute top-2 right-2 p-2 bg-white/90 rounded-xl opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all hover:bg-danger-bg"
+        >
+          <Trash2 className="w-3.5 h-3.5 text-danger" />
+        </button>
+      </div>
+
+      <div className="p-3 space-y-2">
+        <p className="text-sm font-medium text-charcoal truncate">{item.name}</p>
+
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Badge variant={item.category}>{item.category}</Badge>
+          {item.color && <span className="text-xs text-charcoal-muted">{item.color}</span>}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-charcoal-muted">Worn {wears}/2</p>
+          {needsWash && (
+            <button
+              onClick={() => onWashed(item)}
+              className="flex items-center gap-1 text-xs text-warning-text bg-warning-bg px-2.5 py-1 rounded-full hover:bg-warning/20 transition-colors font-medium"
+            >
+              <RotateCcw className="w-3 h-3" aria-hidden="true" />
+              Washed
+            </button>
+          )}
+        </div>
+
+        {item.tags.length > 0 && (
+          <div className="flex gap-1 flex-wrap">
+            {item.tags.slice(0, 2).map((tag) => (
+              <span key={tag} className="text-xs text-charcoal-muted bg-surface-overlay px-2 py-0.5 rounded-full">
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
 
 export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Props) {
   const [showUpload, setShowUpload] = useState(false)
   const [filter, setFilter] = useState<ClothingCategory | 'all' | 'wash'>('all')
-  const [restoreMsg, setRestoreMsg] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
+  const toast = useToast()
 
   function handleImport(file: File) {
     const reader = new FileReader()
     reader.onload = (e) => {
       try {
         const msg = importBackup(e.target?.result as string)
-        setRestoreMsg(msg)
+        toast.success(msg)
         onUpdate()
-        setTimeout(() => setRestoreMsg(''), 5000)
       } catch {
-        setRestoreMsg('Could not read backup file — make sure it\'s a valid Daily Stylist backup.')
-        setTimeout(() => setRestoreMsg(''), 5000)
+        toast.error('Could not read backup file — make sure it\'s a valid Daily Stylist backup.')
       }
     }
     reader.readAsText(file)
@@ -60,7 +138,6 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
 
   function handleWashed(item: ClothingItem) {
     markWashed(item.id)
-    // Sync updated item to cloud
     if (userId) {
       const updated: ClothingItem = { ...item, wearCount: 0 }
       addItemCloud(userId, updated).catch(() => {})
@@ -68,156 +145,142 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
     onUpdate()
   }
 
+  // Build tabs with counts
+  const filterTabs = [
+    { id: 'all', label: 'All', count: wardrobe.length },
+    { id: 'wash', label: 'Needs Wash', count: needsWashCount },
+    ...CLOTHING_CATEGORIES.map((cat) => ({
+      id: cat,
+      label: cat.charAt(0).toUpperCase() + cat.slice(1),
+      count: wardrobe.filter((i) => i.category === cat).length,
+    })),
+  ]
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 className="text-xl font-semibold text-charcoal">My Wardrobe</h2>
-          <p className="text-sm text-gray-400">{wardrobe.length} items{needsWashCount > 0 ? ` · ${needsWashCount} need washing` : ''}</p>
+          <h2 className="text-2xl font-bold text-charcoal">My Wardrobe</h2>
+          <p className="text-sm text-charcoal-muted mt-0.5">
+            {wardrobe.length} items{needsWashCount > 0 ? ` · ${needsWashCount} need washing` : ''}
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Backup / Restore */}
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<Download className="w-3.5 h-3.5" />}
             onClick={exportBackup}
-            title="Download backup"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 transition-colors"
           >
-            <Download className="w-3.5 h-3.5" /> Backup
-          </button>
-          <button
+            Backup
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<Upload className="w-3.5 h-3.5" />}
             onClick={() => importRef.current?.click()}
-            title="Restore from backup"
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 transition-colors"
           >
-            <Upload className="w-3.5 h-3.5" /> Restore
-          </button>
-          <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
-            onChange={(e) => { if (e.target.files?.[0]) handleImport(e.target.files[0]); e.target.value = '' }} />
-          <button onClick={() => setShowUpload(true)}
-            className="flex items-center gap-2 bg-charcoal text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black transition-colors">
-            <Plus className="w-4 h-4" /> Add Item
-          </button>
+            Restore
+          </Button>
+          <input
+            ref={importRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files?.[0]) handleImport(e.target.files[0])
+              e.target.value = ''
+            }}
+          />
+          <Button
+            variant="primary"
+            size="sm"
+            leftIcon={<Plus className="w-4 h-4" />}
+            onClick={() => setShowUpload(true)}
+          >
+            Add Item
+          </Button>
         </div>
       </div>
 
-      {/* Restore message */}
-      {restoreMsg && (
-        <div className={`rounded-2xl px-4 py-3 text-sm flex items-center gap-2 ${restoreMsg.includes('Could not') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'}`}>
-          {restoreMsg.includes('Could not') ? '❌' : '✅'} {restoreMsg}
+      {/* Stats — at top */}
+      {wardrobe.length > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          <Card padding="md" className="text-center">
+            <p className="text-2xl font-bold text-charcoal">{wardrobe.length}</p>
+            <p className="text-xs text-charcoal-muted mt-0.5">Total items</p>
+          </Card>
+          <Card padding="md" className="text-center">
+            <p className="text-2xl font-bold text-warning">{needsWashCount}</p>
+            <p className="text-xs text-charcoal-muted mt-0.5">Need wash</p>
+          </Card>
+          <Card padding="md" className="text-center">
+            <p className="text-2xl font-bold text-sage">{wardrobe.filter((i) => !i.lastWorn).length}</p>
+            <p className="text-xs text-charcoal-muted mt-0.5">Never worn</p>
+          </Card>
         </div>
       )}
 
       {/* Laundry alert */}
       {needsWashCount > 0 && (
-        <div className="bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3 flex items-center gap-3">
-          <span className="text-xl">🧺</span>
+        <div className="bg-warning-bg border border-warning/20 rounded-2xl px-4 py-3 flex items-center gap-3">
+          <RotateCcw className="w-5 h-5 text-warning flex-shrink-0" aria-hidden="true" />
           <div>
-            <p className="text-sm font-medium text-amber-700">{needsWashCount} item{needsWashCount > 1 ? 's' : ''} need washing</p>
-            <p className="text-xs text-amber-500">These items have been worn 2+ times. Use the filter below to find them.</p>
+            <p className="text-sm font-medium text-warning-text">
+              {needsWashCount} item{needsWashCount > 1 ? 's' : ''} need washing
+            </p>
+            <p className="text-xs text-warning/70 mt-0.5">
+              These items have been worn 2+ times. Use the filter below to find them.
+            </p>
           </div>
         </div>
       )}
 
       {/* Filters */}
-      <div className="flex gap-2 flex-wrap">
-        {FILTER_OPTIONS.map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-colors capitalize ${
-              filter === f ? 'bg-charcoal text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
-            }`}>
-            {f === 'wash' && '🧺 '}
-            {f === 'wash' ? `Needs wash${needsWashCount > 0 ? ` (${needsWashCount})` : ''}` : f}
-          </button>
-        ))}
-      </div>
+      <Tabs tabs={filterTabs} active={filter} onChange={(id) => setFilter(id as typeof filter)} />
 
+      {/* Grid */}
       {filtered.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            {filter === 'wash' ? <span className="text-3xl">🧺</span> : <Tag className="w-7 h-7 text-gray-300" />}
-          </div>
-          <p className="text-gray-400 text-sm">
-            {wardrobe.length === 0 ? 'No clothes yet — add your first item!' :
-             filter === 'wash' ? 'All clean! No items need washing.' :
-             'No items in this category'}
-          </p>
-        </div>
+        <EmptyState
+          icon={filter === 'wash' ? RotateCcw : Tag}
+          title={
+            wardrobe.length === 0 ? 'No clothes yet' :
+            filter === 'wash' ? 'All clean!' :
+            'No items in this category'
+          }
+          description={
+            wardrobe.length === 0 ? 'Add your first item to get started.' :
+            filter === 'wash' ? 'None of your items need washing right now.' :
+            undefined
+          }
+          action={
+            wardrobe.length === 0
+              ? { label: 'Add Item', onClick: () => setShowUpload(true) }
+              : undefined
+          }
+        />
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {filtered.map((item) => {
-            const wears = item.wearCount ?? 0
-            const needsWash = wears >= 2
-            return (
-              <div key={item.id} className={`bg-white rounded-2xl overflow-hidden shadow-sm border group ${needsWash ? 'border-amber-200' : 'border-gray-100'}`}>
-                <div className="relative aspect-square bg-gray-50">
-                  <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                  {/* Wear dots */}
-                  <div className="absolute bottom-2 left-2 flex gap-1">
-                    {[0, 1].map((i) => (
-                      <span key={i} className={`w-2 h-2 rounded-full ${i < wears ? 'bg-amber-400' : 'bg-white/60'}`} />
-                    ))}
-                  </div>
-                  {needsWash && (
-                    <div className="absolute top-2 left-2 bg-amber-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                      🧺 Wash
-                    </div>
-                  )}
-                  <button onClick={() => handleDelete(item.id)}
-                    className="absolute top-2 right-2 p-1.5 bg-white/90 rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50">
-                    <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                  </button>
-                </div>
-                <div className="p-3 space-y-1.5">
-                  <p className="text-sm font-medium text-charcoal truncate">{item.name}</p>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${CATEGORY_COLORS[item.category]}`}>{item.category}</span>
-                    {item.color && <span className="text-xs text-gray-400">{item.color}</span>}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-gray-300">{wears}/2 wears</p>
-                    {needsWash && (
-                      <button
-                        onClick={() => handleWashed(item)}
-                        className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full hover:bg-amber-100 transition-colors font-medium"
-                      >
-                        Mark washed ✓
-                      </button>
-                    )}
-                  </div>
-                  {item.tags.length > 0 && (
-                    <div className="flex gap-1 flex-wrap">
-                      {item.tags.slice(0, 2).map((tag) => (
-                        <span key={tag} className="text-xs text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full">{tag}</span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
+          {filtered.map((item) => (
+            <WardrobeItemCard
+              key={item.id}
+              item={item}
+              onDelete={handleDelete}
+              onWashed={handleWashed}
+            />
+          ))}
         </div>
       )}
 
-      {/* Stats bar */}
-      {wardrobe.length > 0 && (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 grid grid-cols-3 gap-4 text-center">
-          <div>
-            <p className="text-lg font-semibold text-charcoal">{wardrobe.length}</p>
-            <p className="text-xs text-gray-400">Total items</p>
-          </div>
-          <div>
-            <p className="text-lg font-semibold text-amber-500">{needsWashCount}</p>
-            <p className="text-xs text-gray-400">Need wash</p>
-          </div>
-          <div>
-            <p className="text-lg font-semibold text-sage">{wardrobe.filter(i => !i.lastWorn).length}</p>
-            <p className="text-xs text-gray-400">Never worn</p>
-          </div>
-        </div>
+      {showUpload && (
+        <UploadModal
+          config={config}
+          onClose={() => setShowUpload(false)}
+          onAdded={onUpdate}
+          userId={userId}
+        />
       )}
-
-      {showUpload && <UploadModal config={config} onClose={() => setShowUpload(false)} onAdded={onUpdate} userId={userId} />}
     </div>
   )
 }
