@@ -195,7 +195,10 @@ async function proxyAnalyzeClothing(imageBase64: string) {
 }
 
 async function proxyGenerateOutfit(wardrobe: ClothingItem[], date: string, occasion?: string, weatherHint?: string) {
-  const data = await fetchAI({ action: 'outfit', wardrobe, date, occasion, weatherHint })
+  // Strip images before sending — the API only uses id/name/category/color.
+  // Sending full base64 images can exceed Vercel's 4.5 MB body limit and cause silent failures.
+  const wardrobeSafe = wardrobe.map(({ id, name, category, color, tags }) => ({ id, name, category, color, tags }))
+  const data = await fetchAI({ action: 'outfit', wardrobe: wardrobeSafe, date, occasion, weatherHint })
   return data as Omit<OutfitSuggestion, 'id' | 'generatedAt'>
 }
 
