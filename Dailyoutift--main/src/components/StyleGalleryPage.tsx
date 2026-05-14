@@ -1,5 +1,5 @@
 import { memo, useState, useEffect } from 'react'
-import { Images, Sparkles, ShoppingBag, X } from 'lucide-react'
+import { Images, Sparkles, ShoppingBag, Wand2, X } from 'lucide-react'
 import type { ClothingItem, OutfitSuggestion, StyleImage } from '../types'
 import { EmptyState, Tabs, Badge } from './ui'
 
@@ -14,7 +14,7 @@ interface StyleEntry {
   id: string
   image: string
   date: string
-  source: 'outfit' | 'try-on' | 'manual'
+  source: 'outfit' | 'try-on' | 'manual' | 'outfit-builder'
   occasion?: string
   description?: string
   itemIds: string[]
@@ -36,7 +36,7 @@ function toEntries(outfits: OutfitSuggestion[], styleImages: StyleImage[]): Styl
     id: s.id,
     image: s.image,
     date: s.createdAt,
-    source: 'try-on' as const,
+    source: (s.source === 'outfit-builder' ? 'outfit-builder' : 'try-on') as StyleEntry['source'],
     itemIds: s.itemIds,
   }))
   return [...fromOutfits, ...fromStyles].sort((a, b) => b.date.localeCompare(a.date))
@@ -46,6 +46,7 @@ const FILTER_TABS = [
   { id: 'all', label: 'All' },
   { id: 'outfit', label: 'Outfit preview' },
   { id: 'try-on', label: 'Try-on' },
+  { id: 'outfit-builder', label: 'Builder' },
 ]
 
 const StyleGalleryPage = memo(function StyleGalleryPage({ outfits, wardrobe, styleImages = [] }: Props) {
@@ -57,6 +58,7 @@ const StyleGalleryPage = memo(function StyleGalleryPage({ outfits, wardrobe, sty
   const displayed =
     filter === 'all' ? allEntries :
     filter === 'try-on' ? allEntries.filter((e) => e.source === 'try-on') :
+    filter === 'outfit-builder' ? allEntries.filter((e) => e.source === 'outfit-builder') :
     allEntries.filter((e) => e.source === 'outfit' || e.source === 'manual')
 
   // Keyboard nav for lightbox
@@ -76,6 +78,7 @@ const StyleGalleryPage = memo(function StyleGalleryPage({ outfits, wardrobe, sty
     count:
       t.id === 'all' ? allEntries.length :
       t.id === 'try-on' ? allEntries.filter((e) => e.source === 'try-on').length :
+      t.id === 'outfit-builder' ? allEntries.filter((e) => e.source === 'outfit-builder').length :
       allEntries.filter((e) => e.source === 'outfit' || e.source === 'manual').length,
   }))
 
@@ -147,6 +150,8 @@ const StyleGalleryPage = memo(function StyleGalleryPage({ outfits, wardrobe, sty
           description={
             filter === 'try-on'
               ? 'Go to Try Buy, upload items, and generate a look.'
+              : filter === 'outfit-builder'
+              ? 'Go to Build, pick items, and generate an outfit photo.'
               : 'Go to Today, generate an outfit photo, and it will be saved here.'
           }
         />
@@ -156,16 +161,17 @@ const StyleGalleryPage = memo(function StyleGalleryPage({ outfits, wardrobe, sty
             const items = entry.itemIds.map((id) => wardrobeMap[id]).filter(Boolean)
             const dateLabel = new Date(entry.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
             const isTryOn = entry.source === 'try-on'
+            const isBuilder = entry.source === 'outfit-builder'
             return (
               <div key={entry.id} className="bg-white rounded-2xl border border-[#E8E4DF] shadow-sm overflow-hidden">
                 <button
                   className="relative w-full block group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blush"
                   onClick={() => setExpandedIdx(idx)}
-                  aria-label={`View ${isTryOn ? 'try-on' : 'outfit'} from ${dateLabel}`}
+                  aria-label={`View ${isBuilder ? 'builder' : isTryOn ? 'try-on' : 'outfit'} from ${dateLabel}`}
                 >
                   <img
                     src={entry.image}
-                    alt={isTryOn ? 'Try-on result' : `${entry.occasion} outfit`}
+                    alt={isBuilder ? 'Builder outfit' : isTryOn ? 'Try-on result' : `${entry.occasion} outfit`}
                     className="w-full aspect-[3/4] object-cover bg-surface-overlay"
                     loading="lazy"
                   />
@@ -177,7 +183,9 @@ const StyleGalleryPage = memo(function StyleGalleryPage({ outfits, wardrobe, sty
                       </Badge>
                     ) : <span />}
                     <div className="flex items-center gap-1 text-white/80 text-xs bg-black/30 px-2 py-0.5 rounded-full">
-                      {isTryOn
+                      {isBuilder
+                        ? <><Wand2 className="w-3 h-3" /> Builder</>
+                        : isTryOn
                         ? <><ShoppingBag className="w-3 h-3" /> Try-on</>
                         : <><Sparkles className="w-3 h-3" /> Preview</>
                       }

@@ -1,24 +1,28 @@
 import { useState, useCallback } from 'react'
-import { Wand2, X, Download, RefreshCw, User, CheckCircle2, Shirt } from 'lucide-react'
-import type { ClothingItem } from '../types'
+import { Wand2, X, Download, RefreshCw, User, CheckCircle2, Shirt, BookImage } from 'lucide-react'
+import type { ClothingItem, StyleImage } from '../types'
 import type { AppConfig } from '../lib/storage'
-import { getProfilePhotos } from '../lib/storage'
+import { getProfilePhotos, getStyleImages, saveStyleImages } from '../lib/storage'
 import { generateOutfitLook } from '../lib/preview'
+import { uploadStyleImage, saveStyleCloud } from '../lib/cloud'
 import { Button, EmptyState } from './ui'
 import { useToast } from '../contexts/ToastContext'
 
 interface Props {
   wardrobe: ClothingItem[]
   config: AppConfig
+  userId?: string
+  onSaved?: () => void
 }
 
 const CATEGORY_ORDER = ['outerwear', 'top', 'bottom', 'dress', 'shoes', 'accessory']
 
-export default function OutfitBuilderPage({ wardrobe, config }: Props) {
+export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [useProfilePhoto, setUseProfilePhoto] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [resultImage, setResultImage] = useState<string | null>(null)
+  const [savedToGallery, setSavedToGallery] = useState(false)
   const toast = useToast()
 
   const profilePhotos = getProfilePhotos()
@@ -35,6 +39,7 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
       return next
     })
     setResultImage(null)
+    setSavedToGallery(false)
   }, [])
 
   const selectedItems = wardrobe.filter((i) => selectedIds.has(i.id))
@@ -43,10 +48,13 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
     if (selectedIds.size === 0) return
     setGenerating(true)
     setResultImage(null)
+    setSavedToGallery(false)
     try {
       const profilePhoto = (useProfilePhoto && hasProfilePhoto) ? profilePhotos[0] : null
       const image = await generateOutfitLook(selectedItems, profilePhoto, config)
       setResultImage(image)
+      // Auto-save to Styles gallery
+      await saveToGallery(image)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (msg.includes('quota') || msg.includes('429')) {
@@ -59,6 +67,26 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
     } finally {
       setGenerating(false)
     }
+  }
+
+  async function saveToGallery(image: string) {
+    const styleId = crypto.randomUUID()
+    let finalImage = image
+    if (userId) {
+      try { finalImage = await uploadStyleImage(userId, styleId, image) } catch { /* keep local */ }
+    }
+    const style: StyleImage = {
+      id: styleId,
+      image: finalImage,
+      itemIds: selectedItems.map((i) => i.id),
+      source: 'outfit-builder',
+      createdAt: new Date().toISOString(),
+    }
+    const existing = getStyleImages()
+    saveStyleImages([style, ...existing])
+    if (userId) saveStyleCloud(userId, style).catch(() => {})
+    setSavedToGallery(true)
+    onSaved?.()
   }
 
   function handleDownload() {
@@ -156,9 +184,15 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
       {resultImage && (
         <div className="bg-white rounded-2xl shadow-sm border border-[#E8E4DF] overflow-hidden">
           <img src={resultImage} alt="Generated outfit" className="w-full object-contain max-h-[70vh]" />
+          {savedToGallery && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-sage/10 border-t border-[#E8E4DF] text-sm text-charcoal-muted">
+              <BookImage className="w-4 h-4 text-sage flex-shrink-0" />
+              Saved to Styles gallery
+            </div>
+          )}
           <div className="flex gap-2 p-3">
             <Button variant="primary" size="md" leftIcon={<Download className="w-4 h-4" />} onClick={handleDownload} className="flex-1">
-              Save Photo
+              Download
             </Button>
             <Button variant="secondary" size="md" leftIcon={<RefreshCw className="w-4 h-4" />} onClick={handleGenerate} disabled={generating}>
               Retry

@@ -237,7 +237,7 @@ export default function App() {
         <DailyOutfitPage wardrobe={wardrobe} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} streak={streak} />
       )}
       {tab === 'wardrobe' && <WardrobePage wardrobe={wardrobe} config={config} onUpdate={refresh} userId={user?.id} />}
-      {tab === 'build'    && <OutfitBuilderPage wardrobe={wardrobe} config={config} />}
+      {tab === 'build'    && <OutfitBuilderPage wardrobe={wardrobe} config={config} userId={user?.id} onSaved={refresh} />}
       {tab === 'week'     && <WeekPlanPage wardrobe={wardrobe} outfits={outfits} config={config} onUpdate={refresh} userId={user?.id} />}
       {tab === 'styles'   && <StyleGalleryPage outfits={outfits} wardrobe={wardrobe} styleImages={styleImages} />}
       {tab === 'history'  && <HistoryPage outfits={outfits} wardrobe={wardrobe} />}
