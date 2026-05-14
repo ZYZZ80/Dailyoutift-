@@ -1,13 +1,21 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
 
-// Permissive safety settings for a fashion/clothing assistant.
-// Gemini's defaults are too aggressive and block benign terms like "Date Night".
+// Permissive safety settings — fashion app, no harmful content.
 const FASHION_SAFETY = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ]
+
+// Gemini flags certain occasion names at the prompt level (400 rejection).
+// Map them to neutral equivalents for the prompt text only.
+const SAFE_OCCASION: Record<string, string> = {
+  'Date Night':  'Evening Dining',
+  'Party':       'Social Gathering',
+  'Beach':       'Outdoor Day',
+  'Sports':      'Active Day',
+}
 
 function extractFirstJSON(text: string): string {
   const start = text.indexOf('{')
@@ -64,11 +72,13 @@ export default async function handler(req: any, res: any) {
     if (action === 'outfit') {
       if (!wardrobe || !date) return res.status(400).json({ error: 'wardrobe and date required' })
       const day = new Date(date as string).toLocaleDateString('en-US', { weekday: 'long' })
-      const occasionHint = occasion ? ` for a ${occasion} occasion` : ''
-      const weatherLine = weatherHint ? `\n${weatherHint}` : ''
+      // Use a safety-neutral name in the prompt text; keep the real name for JSON output
+      const safeOcc = occasion ? (SAFE_OCCASION[occasion as string] ?? occasion) : null
+      const occasionHint = safeOcc ? ` suitable for a ${safeOcc} setting` : ''
+      const weatherLine = weatherHint ? `\nWeather context: ${weatherHint}` : ''
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const wardrobeList = (wardrobe as any[]).map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-      const prompt = `You are a professional fashion and clothing assistant. Select 2-4 clothing items from the wardrobe list below to create a well-coordinated outfit for ${day}, ${date}${occasionHint}.${weatherLine}\n\nAvailable clothing items:\n${wardrobeList}\n\nRespond ONLY with this exact JSON structure:\n{"itemIds":["id1","id2"],"description":"brief outfit description","styleNotes":"practical styling tips","occasion":"${occasion ?? 'Casual'}"}`
+      const prompt = `You are a professional wardrobe stylist. Choose 2-4 clothing items from the list below that work well together as a complete outfit for ${day}${occasionHint}.${weatherLine}\n\nClothing items available:\n${wardrobeList}\n\nReply with ONLY this JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling advice","occasion":"${occasion ?? 'Casual'}"}`
       const result = await model.generateContent(prompt)
       return res.json({ ...parseAI(result.response.text()), date })
     }

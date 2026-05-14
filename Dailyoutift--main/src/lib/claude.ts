@@ -10,14 +10,21 @@ const GEMINI_TEXT_MODELS = [
   'gemini-1.5-flash-8b',
 ]
 
-// Permissive safety settings for a fashion/clothing assistant.
-// Gemini's defaults are too aggressive and block benign terms like "Date Night".
+// Permissive safety settings — fashion app, no harmful content.
 const FASHION_SAFETY = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ]
+
+// Gemini flags certain occasion names at the prompt level (400 rejection).
+const SAFE_OCCASION: Record<string, string> = {
+  'Date Night':  'Evening Dining',
+  'Party':       'Social Gathering',
+  'Beach':       'Outdoor Day',
+  'Sports':      'Active Day',
+}
 
 function resolveUrl(url: string): string {
   if (url.startsWith('/')) return `${window.location.origin}${url}`
@@ -252,10 +259,11 @@ export async function generateOutfit(
   if (config.provider === 'proxy') return proxyGenerateOutfit(wardrobe, date, occasion, weatherHint)
 
   const day = new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
-  const occasionHint = occasion ? ` for a ${occasion} occasion` : ''
-  const weatherLine = weatherHint ? `\n${weatherHint}` : ''
+  const safeOcc = occasion ? (SAFE_OCCASION[occasion] ?? occasion) : null
+  const occasionHint = safeOcc ? ` suitable for a ${safeOcc} setting` : ''
+  const weatherLine = weatherHint ? `\nWeather context: ${weatherHint}` : ''
   const wardrobeList = wardrobe.map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-  const prompt = `You are a professional fashion and clothing assistant. Select 2-4 clothing items from the wardrobe list below to create a well-coordinated outfit for ${day}, ${date}${occasionHint}.${weatherLine}\n\nAvailable clothing items:\n${wardrobeList}\n\nRespond ONLY with this exact JSON structure:\n{"itemIds":["id1","id2"],"description":"brief outfit description","styleNotes":"practical styling tips","occasion":"${occasion ?? 'Casual'}"}`
+  const prompt = `You are a professional wardrobe stylist. Choose 2-4 clothing items from the list below that work well together as a complete outfit for ${day}${occasionHint}.${weatherLine}\n\nClothing items available:\n${wardrobeList}\n\nReply with ONLY this JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling advice","occasion":"${occasion ?? 'Casual'}"}`
 
   if (config.provider === 'gemini') {
     try {
