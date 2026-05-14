@@ -77,7 +77,7 @@ const WardrobeItemCard = memo(function WardrobeItemCard({ item, onDelete, onWash
         </div>
 
         <div className="flex items-center justify-between">
-          <p className="text-xs text-charcoal-muted">Worn {wears}/2</p>
+          <p className="text-xs text-charcoal-muted">Worn {Math.min(wears, 2)}/2{wears > 2 ? '+' : ''}</p>
           {needsWash && (
             <button
               onClick={() => onWashed(item)}
