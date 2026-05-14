@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { User } from '@supabase/supabase-js'
-import { Shirt, Sparkles, History, CalendarDays, Wand2, Images, Sun } from 'lucide-react'
+import { Shirt, Sparkles, History, CalendarDays, Wand2, Images, Sun, ShoppingBag } from 'lucide-react'
 import { getConfig, getWardrobe, getOutfits, getProfilePhotos, saveConfig, saveWardrobe, replaceOutfits, saveProfilePhotos, type AppConfig } from './lib/storage'
 import { supabase, SUPABASE_ENABLED } from './lib/supabase'
 import { checkProxy } from './lib/claude'
@@ -13,15 +13,17 @@ import HistoryPage from './components/HistoryPage'
 import WeekPlanPage from './components/WeekPlanPage'
 import OutfitBuilderPage from './components/OutfitBuilderPage'
 import StyleGalleryPage from './components/StyleGalleryPage'
+import TryOnPage from './components/TryOnPage'
 import LoginPage from './components/LoginPage'
 import Sidebar from './components/Sidebar'
 import MobileHeader from './components/MobileHeader'
+import GenerationStatusBar from './components/GenerationStatusBar'
 import { Spinner } from './components/ui'
 import { ToastProvider } from './contexts/ToastContext'
 import { WardrobeProvider } from './contexts/WardrobeContext'
 import { ConfigProvider } from './contexts/ConfigContext'
 
-type Tab = 'today' | 'wardrobe' | 'week' | 'history' | 'build' | 'styles'
+type Tab = 'today' | 'wardrobe' | 'week' | 'history' | 'build' | 'styles' | 'tryon'
 
 export function isConfigured(c: AppConfig) {
   if (c.provider === 'proxy') return true
@@ -201,6 +203,7 @@ export default function App() {
     { id: 'week',     label: 'Week',     icon: <CalendarDays className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'styles',   label: 'Styles',   icon: <Images className="w-5 h-5" strokeWidth={1.5} />, badge: outfits.filter((o) => o.previewImage).length },
     { id: 'history',  label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'tryon',    label: 'Try Buy',  icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
   ]
 
   const pageContent = (
@@ -211,6 +214,7 @@ export default function App() {
       {tab === 'week'     && <WeekPlanPage wardrobe={wardrobe} outfits={outfits} config={config} onUpdate={refresh} userId={user?.id} />}
       {tab === 'styles'   && <StyleGalleryPage outfits={outfits} wardrobe={wardrobe} />}
       {tab === 'history'  && <HistoryPage outfits={outfits} wardrobe={wardrobe} />}
+      {tab === 'tryon'    && <TryOnPage config={config} userId={user?.id} onSaved={refresh} />}
     </>
   )
 
@@ -218,6 +222,7 @@ export default function App() {
     <ToastProvider>
       <WardrobeProvider wardrobe={wardrobe} outfits={outfits} userId={user?.id} refresh={refresh}>
         <ConfigProvider config={config} setConfig={setConfig} isConfigured={isConfigured(config)}>
+          <GenerationStatusBar onJump={(origin) => setTab(origin as Tab)} />
           <div className="min-h-screen bg-cream">
             {/* Desktop layout */}
             <div className="hidden md:flex min-h-screen">

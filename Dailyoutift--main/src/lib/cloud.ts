@@ -181,6 +181,46 @@ export async function uploadStylePreviewImage(
   }
 }
 
+/** Upload a try-on result image to the styles Storage bucket. Returns public URL (or original on failure). */
+export async function uploadStyleImage(
+  userId: string,
+  styleId: string,
+  imageDataUrl: string,
+): Promise<string> {
+  if (!SUPABASE_ENABLED || !supabase) return imageDataUrl
+  if (!imageDataUrl.startsWith('data:')) return imageDataUrl
+  const blob = await base64ToBlob(imageDataUrl)
+  const path = `${userId}/${styleId}.png`
+  try {
+    const upload = supabase.storage.from('styles').upload(path, blob, {
+      contentType: 'image/png',
+      upsert: true,
+    })
+    await withTimeout(upload, 20000, 'Style image upload')
+    const { data } = supabase.storage.from('styles').getPublicUrl(path)
+    return data.publicUrl
+  } catch {
+    return imageDataUrl
+  }
+}
+
+/** Save a try-on style result to the styles table. */
+export async function saveStyleCloud(
+  userId: string,
+  style: import('../types').StyleImage,
+): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  await supabase.from('styles').upsert({
+    id: style.id,
+    user_id: userId,
+    image: style.image,
+    item_ids: style.itemIds,
+    outfit_id: style.outfitId ?? null,
+    source: style.source,
+    created_at: style.createdAt,
+  })
+}
+
 // ── Wardrobe ──────────────────────────────────────────────────────────────────
 
 export async function addItemCloud(userId: string, item: ClothingItem): Promise<void> {

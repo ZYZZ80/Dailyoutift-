@@ -93,6 +93,52 @@ export default async function handler(req: any, res: any) {
       throw new Error('No image returned by Gemini')
     }
 
+    if (action === 'try-on') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { itemsBase64, bodyBase64 } = req.body as { itemsBase64?: string[]; bodyBase64?: string }
+      const items = itemsBase64 ?? []
+      if (items.length === 0) return res.status(400).json({ error: 'items required' })
+
+      // Step 1: describe each item with Gemini vision
+      const descriptions = await Promise.all(items.map(async (item: string) => {
+        const base64Data = item.includes(',') ? item.split(',')[1] : item
+        const mimeType = item.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
+        const result = await model.generateContent([
+          { inlineData: { data: base64Data, mimeType } },
+          'Describe this clothing item in one short sentence: type, color, pattern, style, fit.',
+        ])
+        return result.response.text().trim() || 'an item'
+      }))
+      const combinedDescription = descriptions.length === 1
+        ? descriptions[0]
+        : descriptions.map((d, i) => `(${i + 1}) ${d}`).join('; ')
+
+      // Step 2: generate image with Gemini image generation
+      const imageModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const parts: any[] = []
+      if (bodyBase64) {
+        const base64Data = bodyBase64.includes(',') ? bodyBase64.split(',')[1] : bodyBase64
+        const mimeType = bodyBase64.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
+        parts.push({ inlineData: { data: base64Data, mimeType } })
+        parts.push({ text: `Generate a realistic full-body fashion photo of this person wearing: ${combinedDescription}. Preserve the person's exact appearance. Professional studio lighting, clean white background.` })
+      } else {
+        parts.push({ text: `Create a professional fashion flat-lay photo of these clothing items arranged stylishly: ${combinedDescription}. Clean white background, top-down editorial view, high quality fashion photography.` })
+      }
+      const result = await imageModel.generateContent({
+        contents: [{ role: 'user', parts }],
+        generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } as Record<string, unknown>,
+      })
+      for (const part of result.response.candidates?.[0]?.content?.parts ?? []) {
+        const p = part as unknown as Record<string, unknown>
+        if (p.inlineData) {
+          const d = p.inlineData as { mimeType: string; data: string }
+          return res.json({ imageBase64: `data:${d.mimeType};base64,${d.data}`, description: combinedDescription })
+        }
+      }
+      throw new Error('No image returned by Gemini')
+    }
+
     return res.status(400).json({ error: 'unknown action' })
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)

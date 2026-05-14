@@ -107,6 +107,10 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(100%) scale(0.9)' },
           '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
         },
+        'progress-slide': {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(400%)' },
+        },
       },
       animation: {
         shimmer: 'shimmer 1.5s infinite linear',
@@ -115,6 +119,7 @@ export default {
         'slide-up': 'slide-up 0.2s ease-out',
         'slide-down': 'slide-down 0.2s ease-out',
         'toast-in': 'toast-in 0.25s cubic-bezier(0.34,1.56,0.64,1)',
+        'progress-slide': 'progress-slide 1.4s ease-in-out infinite',
       },
     },
   },

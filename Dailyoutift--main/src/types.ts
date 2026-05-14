@@ -43,3 +43,12 @@ export const OCCASION_ICONS: Record<Occasion, string> = {
 
 // Const array for category iteration
 export const CLOTHING_CATEGORIES: ClothingCategory[] = ['top', 'bottom', 'dress', 'shoes', 'accessory', 'outerwear']
+
+export interface StyleImage {
+  id: string
+  image: string
+  itemIds: string[]
+  outfitId?: string
+  source: string
+  createdAt: string
+}
