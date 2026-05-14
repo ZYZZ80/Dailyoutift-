@@ -224,7 +224,7 @@ export default function App() {
     { id: 'styles',   label: 'Styles',   icon: <Images className="w-5 h-5" strokeWidth={1.5} />, badge: outfits.filter((o) => o.previewImage).length + styleImages.length },
     { id: 'tryon',    label: 'Try Buy',  icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'week',     label: 'Week',     icon: <CalendarDays className="w-5 h-5" strokeWidth={1.5} />, mobileHide: true },
-    { id: 'history',  label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} />, mobileHide: true },
+    { id: 'history',  label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} /> },
   ]
   const MOBILE_NAV = NAV_ITEMS.filter((item) => !item.mobileHide)
 
