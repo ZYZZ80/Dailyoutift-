@@ -1,9 +1,22 @@
-import type { ClothingItem, OutfitSuggestion } from '../types'
+import type { ClothingItem, OutfitSuggestion, StyleImage } from '../types'
 
 const WARDROBE_KEY    = 'daily-stylist-wardrobe'
 const OUTFITS_KEY     = 'daily-stylist-outfits'
 const CONFIG_KEY      = 'daily-stylist-config'
 const PHOTOS_KEY      = 'daily-stylist-profile-photos'
+const STYLES_KEY      = 'daily-stylist-styles'
+
+function safeSave(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value)
+    return true
+  } catch (e) {
+    if (e instanceof DOMException && (e.name === 'QuotaExceededError' || e.code === 22)) {
+      console.warn(`[storage] Quota exceeded for key: ${key}`)
+    }
+    return false
+  }
+}
 
 export interface AppConfig {
   provider: 'openai' | 'gemini' | 'ollama' | 'proxy'
@@ -30,7 +43,7 @@ export function getConfig(): AppConfig {
 }
 
 export function saveConfig(config: AppConfig): void {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
+  safeSave(CONFIG_KEY, JSON.stringify(config))
 }
 
 // ── Profile photos (up to 5) ──────────────────────────────────────────────────
@@ -49,9 +62,24 @@ export function getProfilePhotos(): string[] {
 
 export function saveProfilePhotos(photos: string[]): void {
   const trimmed = photos.filter(Boolean).slice(0, 5)
-  localStorage.setItem(PHOTOS_KEY, JSON.stringify(trimmed))
-  // Keep legacy key in sync (first photo)
-  localStorage.setItem('daily-stylist-profile', trimmed[0] ?? '')
+  safeSave(PHOTOS_KEY, JSON.stringify(trimmed))
+  safeSave('daily-stylist-profile', trimmed[0] ?? '')
+}
+
+// ── Style images (try-on results) ─────────────────────────────────────────────
+
+export function getStyleImages(): StyleImage[] {
+  try {
+    return JSON.parse(localStorage.getItem(STYLES_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+export function saveStyleImages(styles: StyleImage[]): void {
+  // Only persist public URLs (never base64) to avoid quota pressure
+  const safe = styles.filter((s) => !s.image.startsWith('data:')).slice(0, 50)
+  safeSave(STYLES_KEY, JSON.stringify(safe))
 }
 
 /** @deprecated Use getProfilePhotos()[0] */
@@ -81,7 +109,16 @@ export function getWardrobe(): ClothingItem[] {
 }
 
 export function saveWardrobe(items: ClothingItem[]): void {
-  localStorage.setItem(WARDROBE_KEY, JSON.stringify(items))
+  const json = JSON.stringify(items)
+  if (!safeSave(WARDROBE_KEY, json)) {
+    // Quota exceeded: strip large base64 images (already uploaded to Supabase) and retry
+    const stripped = items.map((item) =>
+      item.image.startsWith('data:') && item.image.length > 50_000
+        ? { ...item, image: '' }
+        : item,
+    )
+    safeSave(WARDROBE_KEY, JSON.stringify(stripped))
+  }
 }
 
 export function addClothingItem(item: ClothingItem): void {
@@ -164,7 +201,7 @@ export function getOutfits(): OutfitSuggestion[] {
 }
 
 export function replaceOutfits(outfits: OutfitSuggestion[]): void {
-  localStorage.setItem(OUTFITS_KEY, JSON.stringify(outfits.slice(0, 90)))
+  safeSave(OUTFITS_KEY, JSON.stringify(outfits.slice(0, 90)))
 }
 
 export function saveOutfit(outfit: OutfitSuggestion): void {

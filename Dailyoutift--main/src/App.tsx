@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { User } from '@supabase/supabase-js'
 import { Shirt, Sparkles, History, CalendarDays, Wand2, Images, Sun, ShoppingBag } from 'lucide-react'
-import { getConfig, getWardrobe, getOutfits, getProfilePhotos, saveConfig, saveWardrobe, replaceOutfits, saveProfilePhotos, type AppConfig } from './lib/storage'
+import { getConfig, getWardrobe, getOutfits, getProfilePhotos, getStyleImages, saveConfig, saveWardrobe, replaceOutfits, saveProfilePhotos, saveStyleImages, type AppConfig } from './lib/storage'
 import { supabase, SUPABASE_ENABLED } from './lib/supabase'
 import { checkProxy } from './lib/claude'
-import { addItemCloud, saveOutfitCloud, syncFromCloud, saveConfigCloud, uploadProfilePhoto, subscribeToCloud } from './lib/cloud'
-import type { ClothingItem, OutfitSuggestion } from './types'
+import { addItemCloud, saveOutfitCloud, syncFromCloud, saveConfigCloud, uploadProfilePhoto, subscribeToCloud, getStylesCloud } from './lib/cloud'
+import type { ClothingItem, OutfitSuggestion, StyleImage } from './types'
 import ApiKeySetup from './components/ApiKeySetup'
 import WardrobePage from './components/WardrobePage'
 import DailyOutfitPage from './components/DailyOutfitPage'
@@ -14,6 +14,7 @@ import WeekPlanPage from './components/WeekPlanPage'
 import OutfitBuilderPage from './components/OutfitBuilderPage'
 import StyleGalleryPage from './components/StyleGalleryPage'
 import TryOnPage from './components/TryOnPage'
+import OnboardingPage from './components/OnboardingPage'
 import LoginPage from './components/LoginPage'
 import Sidebar from './components/Sidebar'
 import MobileHeader from './components/MobileHeader'
@@ -69,6 +70,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('today')
   const [wardrobe, setWardrobe] = useState<ClothingItem[]>([])
   const [outfits, setOutfits] = useState<OutfitSuggestion[]>([])
+  const [styleImages, setStyleImages] = useState<StyleImage[]>(() => getStyleImages())
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [user, setUser] = useState<User | null>(null)
   const [authLoading, setAuthLoading] = useState(SUPABASE_ENABLED)
@@ -78,6 +80,7 @@ export default function App() {
   const refresh = useCallback(() => {
     setWardrobe(getWardrobe())
     setOutfits(getOutfits())
+    setStyleImages(getStyleImages())
   }, [])
 
   const setConfig = useCallback((c: AppConfig) => {
@@ -150,6 +153,14 @@ export default function App() {
       refresh()
       setCloudReady(true)
     }
+    // Load try-on styles from cloud (non-critical, runs after main sync)
+    try {
+      const cloudStyles = await getStylesCloud(userId)
+      if (cloudStyles.length > 0) {
+        saveStyleImages(cloudStyles)
+        setStyleImages(cloudStyles)
+      }
+    } catch { /* ignore */ }
   }
 
   useEffect(() => {
@@ -196,23 +207,39 @@ export default function App() {
   const userPhoto: string | null = user?.user_metadata?.avatar_url ?? null
   const needsWashCount = wardrobe.filter((i) => (i.wearCount ?? 0) >= 2).length
 
-  const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  // Compute daily streak — consecutive days with an outfit generated
+  const outfitDates = new Set(outfits.map((o) => o.date))
+  let streak = 0
+  const d = new Date()
+  while (outfitDates.has(d.toISOString().split('T')[0])) {
+    streak++
+    d.setDate(d.getDate() - 1)
+  }
+
+  // All nav items — sidebar shows all, mobile bottom bar shows only the top 5
+  const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode; badge?: number; mobileHide?: boolean }[] = [
     { id: 'today',    label: 'Today',    icon: <Sun className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'wardrobe', label: 'Wardrobe', icon: <Shirt className="w-5 h-5" strokeWidth={1.5} />, badge: needsWashCount > 0 ? needsWashCount : wardrobe.length },
     { id: 'build',    label: 'Build',    icon: <Wand2 className="w-5 h-5" strokeWidth={1.5} /> },
-    { id: 'week',     label: 'Week',     icon: <CalendarDays className="w-5 h-5" strokeWidth={1.5} /> },
-    { id: 'styles',   label: 'Styles',   icon: <Images className="w-5 h-5" strokeWidth={1.5} />, badge: outfits.filter((o) => o.previewImage).length },
-    { id: 'history',  label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'styles',   label: 'Styles',   icon: <Images className="w-5 h-5" strokeWidth={1.5} />, badge: outfits.filter((o) => o.previewImage).length + styleImages.length },
     { id: 'tryon',    label: 'Try Buy',  icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'week',     label: 'Week',     icon: <CalendarDays className="w-5 h-5" strokeWidth={1.5} />, mobileHide: true },
+    { id: 'history',  label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} />, mobileHide: true },
   ]
+  const MOBILE_NAV = NAV_ITEMS.filter((item) => !item.mobileHide)
 
   const pageContent = (
     <>
-      {tab === 'today'    && <DailyOutfitPage wardrobe={wardrobe} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} />}
+      {tab === 'today' && wardrobe.length === 0 && (
+        <OnboardingPage userName={userName} onAddFirstItem={() => setTab('wardrobe')} />
+      )}
+      {tab === 'today' && wardrobe.length > 0 && (
+        <DailyOutfitPage wardrobe={wardrobe} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} streak={streak} />
+      )}
       {tab === 'wardrobe' && <WardrobePage wardrobe={wardrobe} config={config} onUpdate={refresh} userId={user?.id} />}
       {tab === 'build'    && <OutfitBuilderPage wardrobe={wardrobe} config={config} />}
       {tab === 'week'     && <WeekPlanPage wardrobe={wardrobe} outfits={outfits} config={config} onUpdate={refresh} userId={user?.id} />}
-      {tab === 'styles'   && <StyleGalleryPage outfits={outfits} wardrobe={wardrobe} />}
+      {tab === 'styles'   && <StyleGalleryPage outfits={outfits} wardrobe={wardrobe} styleImages={styleImages} />}
       {tab === 'history'  && <HistoryPage outfits={outfits} wardrobe={wardrobe} />}
       {tab === 'tryon'    && <TryOnPage config={config} userId={user?.id} onSaved={refresh} />}
     </>
@@ -285,7 +312,7 @@ export default function App() {
                 aria-label="Tab bar"
               >
                 <div className="max-w-2xl mx-auto px-4 flex">
-                  {NAV_ITEMS.map((item) => (
+                  {MOBILE_NAV.map((item) => (
                     <button
                       key={item.id}
                       onClick={() => setTab(item.id)}

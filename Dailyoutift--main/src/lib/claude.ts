@@ -194,8 +194,8 @@ async function proxyAnalyzeClothing(imageBase64: string) {
   return await fetchAI({ action: 'analyze', imageBase64 }) as { name: string; category: string; color: string; tags: string[] }
 }
 
-async function proxyGenerateOutfit(wardrobe: ClothingItem[], date: string, occasion?: string) {
-  const data = await fetchAI({ action: 'outfit', wardrobe, date, occasion })
+async function proxyGenerateOutfit(wardrobe: ClothingItem[], date: string, occasion?: string, weatherHint?: string) {
+  const data = await fetchAI({ action: 'outfit', wardrobe, date, occasion, weatherHint })
   return data as Omit<OutfitSuggestion, 'id' | 'generatedAt'>
 }
 
@@ -235,13 +235,15 @@ export async function generateOutfit(
   date: string,
   config: AppConfig,
   occasion?: string,
+  weatherHint?: string,
 ): Promise<Omit<OutfitSuggestion, 'id' | 'generatedAt'>> {
-  if (config.provider === 'proxy') return proxyGenerateOutfit(wardrobe, date, occasion)
+  if (config.provider === 'proxy') return proxyGenerateOutfit(wardrobe, date, occasion, weatherHint)
 
   const day = new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
   const occasionHint = occasion ? ` for a ${occasion} occasion` : ''
+  const weatherLine = weatherHint ? `\n${weatherHint}` : ''
   const wardrobeList = wardrobe.map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-  const prompt = `You are a stylist. Pick 2-4 items for ${day}, ${date}${occasionHint}.\n\nWardrobe:\n${wardrobeList}\n\nRespond ONLY with valid JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasion ?? 'Casual'}"}`
+  const prompt = `You are a stylist. Pick 2-4 items for ${day}, ${date}${occasionHint}.${weatherLine}\n\nWardrobe:\n${wardrobeList}\n\nRespond ONLY with valid JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasion ?? 'Casual'}"}`
 
   if (config.provider === 'gemini') {
     try {

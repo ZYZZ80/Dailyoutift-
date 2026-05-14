@@ -29,7 +29,7 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).end()
 
-  const { action, imageBase64, wardrobe, date, occasion } = req.body ?? {}
+  const { action, imageBase64, wardrobe, date, occasion, weatherHint } = req.body ?? {}
 
   const apiKey = process.env.GEMINI_API_KEY
   if (action === 'health') return res.status(200).json({ configured: Boolean(apiKey) })
@@ -56,9 +56,10 @@ export default async function handler(req: any, res: any) {
       if (!wardrobe || !date) return res.status(400).json({ error: 'wardrobe and date required' })
       const day = new Date(date as string).toLocaleDateString('en-US', { weekday: 'long' })
       const occasionHint = occasion ? ` for a ${occasion} occasion` : ''
+      const weatherLine = weatherHint ? `\n${weatherHint}` : ''
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const wardrobeList = (wardrobe as any[]).map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-      const prompt = `You are a stylist. Pick 2-4 items for ${day}, ${date}${occasionHint}.\n\nWardrobe:\n${wardrobeList}\n\nRespond ONLY with valid JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasion ?? 'Casual'}"}`
+      const prompt = `You are a stylist. Pick 2-4 items for ${day}, ${date}${occasionHint}.${weatherLine}\n\nWardrobe:\n${wardrobeList}\n\nRespond ONLY with valid JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasion ?? 'Casual'}"}`
       const result = await model.generateContent(prompt)
       return res.json({ ...parseAI(result.response.text()), date })
     }

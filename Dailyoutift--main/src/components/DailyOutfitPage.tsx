@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
-import { RefreshCw, Calendar, Wand2, Lightbulb } from 'lucide-react'
+import { RefreshCw, Calendar, Wand2, Lightbulb, Flame } from 'lucide-react'
 import type { ClothingItem, OutfitSuggestion, Occasion } from '../types'
 import { generateOutfit } from '../lib/claude'
 import { generateOutfitPreview } from '../lib/preview'
 import { saveOutfit, getProfilePhotos, saveProfilePhotos, recordWear, type AppConfig } from '../lib/storage'
 import { saveOutfitCloud, uploadProfilePhoto, uploadStylePreviewImage } from '../lib/cloud'
+import { fetchWeather, weatherToPromptHint, type WeatherInfo } from '../lib/weather'
 import { Card, Button, EmptyState } from './ui'
 import { useToast } from '../contexts/ToastContext'
 import { OccasionPicker } from './daily/OccasionPicker'
@@ -18,17 +19,20 @@ interface Props {
   config: AppConfig
   onOutfitGenerated: () => void
   userId?: string
+  streak?: number
+  allOutfits?: OutfitSuggestion[]
 }
 
 type AgentStep = 'idle' | 'outfit' | 'preview' | 'done'
 
-export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfitGenerated, userId }: Props) {
+export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfitGenerated, userId, streak = 0 }: Props) {
   const [selectedOccasion, setSelectedOccasion] = useState<Occasion>('Casual')
   const [agentStep, setAgentStep] = useState<AgentStep>('idle')
   const [profilePhotos, setProfilePhotos] = useState<string[]>(() => getProfilePhotos())
   const [activePhotoIdx, setActivePhotoIdx] = useState(0)
   const [previewImage, setPreviewImage] = useState<string | null>(todayOutfit?.previewImage ?? null)
   const [showTips, setShowTips] = useState(false)
+  const [weather, setWeather] = useState<WeatherInfo | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const uploadingSlot = useRef<number>(0)
   const toast = useToast()
@@ -42,6 +46,11 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
   useEffect(() => {
     setPreviewImage(todayOutfit?.previewImage ?? null)
   }, [todayOutfit?.id, todayOutfit?.previewImage])
+
+  // Fetch weather silently — don't block UI if it fails or permission is denied
+  useEffect(() => {
+    fetchWeather().then(setWeather).catch(() => {})
+  }, [])
 
   async function savePreviewToOutfit(outfit: OutfitSuggestion, imageDataUrl: string, source: 'auto' | 'manual') {
     let finalImageUrl = imageDataUrl
@@ -101,7 +110,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
     let savedOutfit: OutfitSuggestion | null = null
     let outfitResult: Omit<OutfitSuggestion, 'id' | 'generatedAt'> | null = null
     try {
-      outfitResult = await generateOutfit(wardrobe, today, config, selectedOccasion)
+      outfitResult = await generateOutfit(wardrobe, today, config, selectedOccasion, weather ? weatherToPromptHint(weather) : undefined)
       savedOutfit = { id: crypto.randomUUID(), ...outfitResult, generatedAt: new Date().toISOString() }
       saveOutfit(savedOutfit)
       recordWear(savedOutfit.itemIds)
@@ -153,12 +162,28 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h2 className="text-2xl font-bold text-charcoal">Today's Outfit</h2>
-        <div className="flex items-center gap-1.5 text-sm text-charcoal-muted mt-0.5">
-          <Calendar className="w-3.5 h-3.5" />
-          {todayLabel}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-2xl font-bold text-charcoal">Today's Outfit</h2>
+          <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+            <div className="flex items-center gap-1.5 text-sm text-charcoal-muted">
+              <Calendar className="w-3.5 h-3.5" />
+              {todayLabel}
+            </div>
+            {weather && (
+              <div className="flex items-center gap-1.5 text-sm text-charcoal-muted">
+                <span>{weather.icon}</span>
+                <span>{weather.temp}°C · {weather.description}</span>
+              </div>
+            )}
+          </div>
         </div>
+        {streak >= 2 && (
+          <div className="flex items-center gap-1.5 bg-orange-50 text-orange-600 px-3 py-1.5 rounded-full text-sm font-semibold">
+            <Flame className="w-4 h-4" />
+            {streak} day streak
+          </div>
+        )}
       </div>
 
       {/* Control panel */}

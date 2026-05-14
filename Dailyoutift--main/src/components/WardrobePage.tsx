@@ -1,5 +1,5 @@
 import { useState, useRef, memo } from 'react'
-import { Plus, Trash2, Tag, Download, Upload, RotateCcw } from 'lucide-react'
+import { Plus, Trash2, Tag, Download, Upload, RotateCcw, Search, X } from 'lucide-react'
 import type { ClothingItem, ClothingCategory } from '../types'
 import { CLOTHING_CATEGORIES } from '../types'
 import { removeClothingItem, markWashed, exportBackup, importBackup, type AppConfig } from '../lib/storage'
@@ -106,6 +106,7 @@ const WardrobeItemCard = memo(function WardrobeItemCard({ item, onDelete, onWash
 export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Props) {
   const [showUpload, setShowUpload] = useState(false)
   const [filter, setFilter] = useState<ClothingCategory | 'all' | 'wash'>('all')
+  const [search, setSearch] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
   const toast = useToast()
 
@@ -125,10 +126,19 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
 
   const needsWashCount = wardrobe.filter((item) => (item.wearCount ?? 0) >= 2).length
 
-  const filtered =
+  const byFilter =
     filter === 'all' ? wardrobe :
     filter === 'wash' ? wardrobe.filter((item) => (item.wearCount ?? 0) >= 2) :
     wardrobe.filter((item) => item.category === filter)
+
+  const q = search.toLowerCase().trim()
+  const filtered = q
+    ? byFilter.filter((item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.color.toLowerCase().includes(q) ||
+        item.tags.some((t) => t.toLowerCase().includes(q)),
+      )
+    : byFilter
 
   function handleDelete(id: string) {
     removeClothingItem(id)
@@ -237,20 +247,45 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
         </div>
       )}
 
+      {/* Search */}
+      {wardrobe.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal-muted pointer-events-none" />
+          <input
+            type="search"
+            placeholder="Search by name, color or tag…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full bg-white border border-[#E8E4DF] rounded-xl pl-9 pr-10 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blush/50 text-charcoal placeholder:text-charcoal-muted/50"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-charcoal-muted hover:text-charcoal"
+              aria-label="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Filters */}
       <Tabs tabs={filterTabs} active={filter} onChange={(id) => setFilter(id as typeof filter)} />
 
       {/* Grid */}
       {filtered.length === 0 ? (
         <EmptyState
-          icon={filter === 'wash' ? RotateCcw : Tag}
+          icon={search ? Search : filter === 'wash' ? RotateCcw : Tag}
           title={
             wardrobe.length === 0 ? 'No clothes yet' :
+            search ? `No results for "${search}"` :
             filter === 'wash' ? 'All clean!' :
             'No items in this category'
           }
           description={
             wardrobe.length === 0 ? 'Add your first item to get started.' :
+            search ? 'Try a different name, color, or tag.' :
             filter === 'wash' ? 'None of your items need washing right now.' :
             undefined
           }

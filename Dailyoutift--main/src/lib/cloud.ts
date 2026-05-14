@@ -204,6 +204,25 @@ export async function uploadStyleImage(
   }
 }
 
+/** Fetch try-on style images from the styles table. */
+export async function getStylesCloud(userId: string): Promise<import('../types').StyleImage[]> {
+  if (!SUPABASE_ENABLED || !supabase) return []
+  const { data } = await supabase
+    .from('styles')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(50)
+  return (data ?? []).map((row) => ({
+    id: row.id as string,
+    image: (row.image as string) ?? '',
+    itemIds: (row.item_ids as string[]) ?? [],
+    outfitId: row.outfit_id as string | undefined,
+    source: (row.source as string) ?? 'try-on',
+    createdAt: (row.created_at as string) ?? new Date().toISOString(),
+  }))
+}
+
 /** Save a try-on style result to the styles table. */
 export async function saveStyleCloud(
   userId: string,
