@@ -1,4 +1,13 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
+
+// Permissive safety settings for a fashion/clothing assistant.
+// Gemini's defaults are too aggressive and block benign terms like "Date Night".
+const FASHION_SAFETY = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+]
 
 function extractFirstJSON(text: string): string {
   const start = text.indexOf('{')
@@ -37,7 +46,7 @@ export default async function handler(req: any, res: any) {
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash', safetySettings: FASHION_SAFETY })
 
     if (action === 'analyze') {
       if (!imageBase64) return res.status(400).json({ error: 'imageBase64 required' })
@@ -59,7 +68,7 @@ export default async function handler(req: any, res: any) {
       const weatherLine = weatherHint ? `\n${weatherHint}` : ''
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const wardrobeList = (wardrobe as any[]).map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-      const prompt = `You are a stylist. Pick 2-4 items for ${day}, ${date}${occasionHint}.${weatherLine}\n\nWardrobe:\n${wardrobeList}\n\nRespond ONLY with valid JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasion ?? 'Casual'}"}`
+      const prompt = `You are a professional fashion and clothing assistant. Select 2-4 clothing items from the wardrobe list below to create a well-coordinated outfit for ${day}, ${date}${occasionHint}.${weatherLine}\n\nAvailable clothing items:\n${wardrobeList}\n\nRespond ONLY with this exact JSON structure:\n{"itemIds":["id1","id2"],"description":"brief outfit description","styleNotes":"practical styling tips","occasion":"${occasion ?? 'Casual'}"}`
       const result = await model.generateContent(prompt)
       return res.json({ ...parseAI(result.response.text()), date })
     }
@@ -69,7 +78,7 @@ export default async function handler(req: any, res: any) {
       const { items, profileBase64 } = req.body as { items: any[]; profileBase64?: string }
       if (!items?.length) return res.status(400).json({ error: 'items required' })
       const outfitDesc = items.map((i) => `${i.name} (${i.color} ${i.category})`).join(', ')
-      const imageModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' })
+      const imageModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation', safetySettings: FASHION_SAFETY })
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const parts: any[] = []
       if (profileBase64) {

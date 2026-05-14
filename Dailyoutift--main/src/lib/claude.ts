@@ -1,5 +1,5 @@
 import OpenAI from 'openai'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
 import type { AppConfig } from './storage'
 import type { ClothingItem, OutfitSuggestion } from '../types'
 
@@ -8,6 +8,15 @@ const GEMINI_TEXT_MODELS = [
   'gemini-2.0-flash',
   'gemini-1.5-flash',
   'gemini-1.5-flash-8b',
+]
+
+// Permissive safety settings for a fashion/clothing assistant.
+// Gemini's defaults are too aggressive and block benign terms like "Date Night".
+const FASHION_SAFETY = [
+  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
 ]
 
 function resolveUrl(url: string): string {
@@ -43,7 +52,7 @@ export function parseGeminiError(e: unknown): string {
 /** Get a Gemini model, trying fallbacks if the primary is unavailable */
 async function getGeminiModel(apiKey: string, models = GEMINI_TEXT_MODELS) {
   const genAI = new GoogleGenerativeAI(apiKey)
-  return genAI.getGenerativeModel({ model: models[0] })
+  return genAI.getGenerativeModel({ model: models[0], safetySettings: FASHION_SAFETY })
 }
 
 function extractFirstJSON(text: string): string {
@@ -246,7 +255,7 @@ export async function generateOutfit(
   const occasionHint = occasion ? ` for a ${occasion} occasion` : ''
   const weatherLine = weatherHint ? `\n${weatherHint}` : ''
   const wardrobeList = wardrobe.map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-  const prompt = `You are a stylist. Pick 2-4 items for ${day}, ${date}${occasionHint}.${weatherLine}\n\nWardrobe:\n${wardrobeList}\n\nRespond ONLY with valid JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasion ?? 'Casual'}"}`
+  const prompt = `You are a professional fashion and clothing assistant. Select 2-4 clothing items from the wardrobe list below to create a well-coordinated outfit for ${day}, ${date}${occasionHint}.${weatherLine}\n\nAvailable clothing items:\n${wardrobeList}\n\nRespond ONLY with this exact JSON structure:\n{"itemIds":["id1","id2"],"description":"brief outfit description","styleNotes":"practical styling tips","occasion":"${occasion ?? 'Casual'}"}`
 
   if (config.provider === 'gemini') {
     try {
