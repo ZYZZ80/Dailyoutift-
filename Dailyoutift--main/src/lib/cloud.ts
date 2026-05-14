@@ -242,9 +242,20 @@ export async function saveStyleCloud(
 
 // ── Wardrobe ──────────────────────────────────────────────────────────────────
 
-export async function addItemCloud(userId: string, item: ClothingItem): Promise<void> {
-  if (!SUPABASE_ENABLED || !supabase) return
-  await supabase.from('wardrobe_items').upsert(toDbItem(userId, item))
+/** Save a wardrobe item to the DB, uploading any base64 image to Storage first.
+ *  Returns the item with the final image URL (Supabase public URL or original). */
+export async function addItemCloud(userId: string, item: ClothingItem): Promise<ClothingItem> {
+  if (!SUPABASE_ENABLED || !supabase) return item
+  let savedItem = item
+  // If the image is still base64, upload it to the wardrobe Storage bucket first
+  if (item.image.startsWith('data:')) {
+    try {
+      const url = await uploadClothingImage(userId, item.id, item.image)
+      savedItem = { ...item, image: url }
+    } catch { /* keep base64 if Storage upload fails */ }
+  }
+  await supabase.from('wardrobe_items').upsert(toDbItem(userId, savedItem))
+  return savedItem
 }
 
 export async function removeItemCloud(userId: string, itemId: string): Promise<void> {

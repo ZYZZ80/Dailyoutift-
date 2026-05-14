@@ -137,10 +137,13 @@ export default function App() {
       } else {
         const migratedWardrobe = mergeById(localWardrobe, [])
         const migratedOutfits = sortOutfits(localOutfits)
-        saveWardrobe(migratedWardrobe)
         replaceOutfits(migratedOutfits)
+        // Upload wardrobe images to Storage and get back items with Supabase URLs
+        const uploadedItems = await Promise.all(
+          migratedWardrobe.map((i) => addItemCloud(userId, i))
+        )
+        saveWardrobe(uploadedItems) // persist with Storage URLs (replaces any base64)
         await Promise.allSettled([
-          ...migratedWardrobe.map((i) => addItemCloud(userId, i)),
           ...migratedOutfits.map((o) => saveOutfitCloud(userId, o)),
           ...localPhotos.slice(0, 1).map((ph) => uploadProfilePhoto(userId, ph)),
         ])

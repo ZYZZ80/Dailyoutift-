@@ -4,8 +4,9 @@ import {
   Camera, Plus, RefreshCw, CheckCircle, Info,
 } from 'lucide-react'
 import type { AppConfig } from '../lib/storage'
-import { getProfilePhotos, saveProfilePhotos } from '../lib/storage'
+import { getProfilePhotos, saveProfilePhotos, getStyleImages, saveStyleImages } from '../lib/storage'
 import { saveStyleCloud, uploadStyleImage, uploadProfilePhoto } from '../lib/cloud'
+import type { StyleImage } from '../types'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
 import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 
@@ -69,9 +70,11 @@ export default function TryOnPage({ userId, onSaved }: Props) {
     if (isMyJob && job?.status === 'done' && job.result) {
       setResult(job.result.imageBase64)
       setDescription(job.result.description ?? '')
+      onSaved?.() // refresh App.tsx styleImages state so gallery shows the new design
     } else if (isMyJob && job?.status === 'error') {
       setError(job.error?.substring(0, 140) ?? 'Generation failed')
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id, job?.status])
 
   // Refresh profile photos when window regains focus (in case user added on another page)
@@ -159,19 +162,24 @@ export default function TryOnPage({ userId, onSaved }: Props) {
         const imageBase64: string = data.imageBase64
         const desc: string = data.description ?? ''
 
-        // Auto-save to Styles — happens in the background
-        if (uid && imageBase64) {
+        // Auto-save to Styles (Storage + DB + localStorage)
+        if (imageBase64) {
           try {
             const styleId = crypto.randomUUID()
-            const imageUrl = await uploadStyleImage(uid, styleId, imageBase64)
-            await saveStyleCloud(uid, {
+            const imageUrl = uid
+              ? await uploadStyleImage(uid, styleId, imageBase64)
+              : imageBase64
+            const styleEntry: StyleImage = {
               id: styleId,
               image: imageUrl,
               itemIds: [],
               source: 'try-on',
               createdAt: new Date().toISOString(),
-            })
-          } catch { /* user can manually save */ }
+            }
+            if (uid) await saveStyleCloud(uid, styleEntry).catch(() => {})
+            // Always save to localStorage so gallery shows it immediately
+            saveStyleImages([styleEntry, ...getStyleImages()])
+          } catch { /* non-critical */ }
         }
 
         return { imageBase64, description: desc }

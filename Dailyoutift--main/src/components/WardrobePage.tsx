@@ -2,7 +2,7 @@ import { useState, useRef, memo } from 'react'
 import { Plus, Trash2, Tag, Download, Upload, RotateCcw, Search, X } from 'lucide-react'
 import type { ClothingItem, ClothingCategory } from '../types'
 import { CLOTHING_CATEGORIES } from '../types'
-import { removeClothingItem, markWashed, exportBackup, importBackup, type AppConfig } from '../lib/storage'
+import { removeClothingItem, markWashed, exportBackup, importBackup, getWardrobe, saveWardrobe, type AppConfig } from '../lib/storage'
 import { removeItemCloud, addItemCloud } from '../lib/cloud'
 import UploadModal from './UploadModal'
 import { Badge, Button, Card, EmptyState, Tabs } from './ui'
@@ -150,7 +150,13 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
     markWashed(item.id)
     if (userId) {
       const updated: ClothingItem = { ...item, wearCount: 0 }
-      addItemCloud(userId, updated).catch(() => {})
+      // addItemCloud also migrates base64 images to Storage and returns the URL
+      addItemCloud(userId, updated).then((saved) => {
+        if (saved.image !== updated.image) {
+          // Image was migrated to Storage — update localStorage with the new URL
+          saveWardrobe(getWardrobe().map((i) => i.id === saved.id ? saved : i))
+        }
+      }).catch(() => {})
     }
     onUpdate()
   }
