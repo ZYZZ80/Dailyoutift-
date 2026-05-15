@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Sparkles, X, Check, AlertCircle, RefreshCw } from 'lucide-react'
-import { useGenerationJob, generationQueue } from '../lib/generationQueue'
+import { AlertCircle, Check, RefreshCw, Sparkles, X } from 'lucide-react'
+import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 
 interface Props {
   onJump: (origin: 'tryon' | 'today' | 'build') => void
@@ -8,23 +8,23 @@ interface Props {
 
 const STEPS_BY_KIND: Record<string, string[]> = {
   'try-on': [
-    'Analyzing your photos…',
-    'Studying each garment…',
-    'Mixing the look on you…',
-    'Polishing details…',
-    'Almost ready…',
+    'Analyzing your photos...',
+    'Studying each garment...',
+    'Mixing the look on you...',
+    'Polishing details...',
+    'Almost ready...',
   ],
   'outfit-preview': [
-    'Picking the best pieces…',
-    'Composing the outfit…',
-    'Rendering the look…',
-    'Final touches…',
+    'Picking the best pieces...',
+    'Composing the outfit...',
+    'Rendering the look...',
+    'Final touches...',
   ],
   'outfit-build': [
-    'Reading your selection…',
-    'Building the look…',
-    'Polishing details…',
-    'Almost ready…',
+    'Reading your selection...',
+    'Building the look...',
+    'Polishing details...',
+    'Almost ready...',
   ],
 }
 
@@ -34,31 +34,29 @@ export default function GenerationStatusBar({ onJump }: Props) {
   const [elapsedSec, setElapsedSec] = useState(0)
   const [readyVisible, setReadyVisible] = useState(false)
 
-  // Cycle progress steps + tick elapsed seconds
   useEffect(() => {
     if (!job || job.status !== 'running') {
       setStepIdx(0)
       setElapsedSec(0)
       return
     }
+
     const startedAt = job.startedAt ?? Date.now()
     const interval = setInterval(() => {
       const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
-      setElapsedSec(sec)
       const steps = STEPS_BY_KIND[job.kind] ?? STEPS_BY_KIND['try-on']
-      // Step every ~6 seconds, freeze on last step until done
+      setElapsedSec(sec)
       setStepIdx(Math.min(Math.floor(sec / 6), steps.length - 1))
     }, 500)
-    return () => clearInterval(interval)
-  }, [job?.id, job?.status])
 
-  // When status flips to done, slide in a "ready" banner that auto-dismisses
+    return () => clearInterval(interval)
+  }, [job?.id, job?.kind, job?.startedAt, job?.status])
+
   useEffect(() => {
-    if (job?.status === 'done') {
-      setReadyVisible(true)
-      const t = setTimeout(() => setReadyVisible(false), 8000)
-      return () => clearTimeout(t)
-    }
+    if (job?.status !== 'done') return
+    setReadyVisible(true)
+    const timer = setTimeout(() => setReadyVisible(false), 8000)
+    return () => clearTimeout(timer)
   }, [job?.id, job?.status])
 
   if (!job) return null
@@ -69,7 +67,6 @@ export default function GenerationStatusBar({ onJump }: Props) {
   const isDone = job.status === 'done'
   const isError = job.status === 'error'
 
-  // Hide finished banner after auto-dismiss (unless still running)
   if (!isRunning && !readyVisible && !isError) return null
 
   return (
@@ -85,7 +82,6 @@ export default function GenerationStatusBar({ onJump }: Props) {
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-semibold text-charcoal truncate">{job.label}</p>
             <p className="text-[11px] text-gray-400 truncate transition-opacity">{currentStep}</p>
-            {/* Indeterminate progress bar — feels more alive than a spinner */}
             <div className="mt-1.5 h-1 bg-gray-100 rounded-full overflow-hidden relative">
               <div className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-blush/0 via-blush to-blush/0 rounded-full animate-progress-slide" />
             </div>
@@ -103,11 +99,15 @@ export default function GenerationStatusBar({ onJump }: Props) {
             <Check className="w-4 h-4 text-emerald-400" strokeWidth={2.5} />
           </div>
           <div className="flex-1 min-w-0 text-left">
-            <p className="text-[13px] font-semibold">Your design is ready ✨</p>
+            <p className="text-[13px] font-semibold">Your design is ready</p>
             <p className="text-[11px] text-white/60 truncate">Tap to view</p>
           </div>
           <span
-            onClick={(e) => { e.stopPropagation(); setReadyVisible(false); generationQueue.clear(job.id) }}
+            onClick={(event) => {
+              event.stopPropagation()
+              setReadyVisible(false)
+              generationQueue.clear(job.id)
+            }}
             className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 transition-colors"
             role="button"
           >
