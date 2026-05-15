@@ -178,10 +178,22 @@ export default function App() {
       return
     }
 
-    // Only show "Loading your cloud wardrobe" on the FIRST fetch. After that,
-    // realtime updates and reconnections refresh data silently in place.
+    // Show the last synced data immediately after login. Supabase remains the
+    // source of truth, but this cache prevents a blank dashboard while realtime
+    // does the first round trip.
+    const cachedWardrobe = getWardrobe()
+    const cachedOutfits = getOutfits()
+    const cachedStyles = getStyles()
+    setWardrobe(cachedWardrobe)
+    setOutfits(cachedOutfits)
+    setStyles(cachedStyles)
+    setLocalImportItems(cachedWardrobe)
+    setLocalImportOutfits(cachedOutfits)
+    setLocalImportStyles(cachedStyles)
+
+    // Only show the loading line if there is no useful cache to display.
     let firstFetch = true
-    setCloudLoading(true)
+    setCloudLoading(cachedWardrobe.length === 0 && cachedOutfits.length === 0 && cachedStyles.length === 0)
     const unsub = subscribeToUserData(
       user.id,
       (data) => {
