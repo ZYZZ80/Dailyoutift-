@@ -214,6 +214,7 @@ function isImageValue(value: unknown): value is string {
 
 function normalizeStyleSource(value: unknown): StyleImage['source'] {
   const raw = String(value ?? '').toLowerCase()
+  if (raw.includes('import')) return 'imported'
   if (raw === 'try-on' || raw === 'tryon' || raw.includes('try')) return 'try-on'
   if (raw === 'outfit-builder' || raw.includes('builder')) return 'outfit-builder'
   return 'daily-preview'

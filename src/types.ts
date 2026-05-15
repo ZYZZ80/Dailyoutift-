@@ -28,6 +28,6 @@ export interface StyleImage {
   image: string
   itemIds: string[]
   outfitId?: string
-  source: 'daily-preview' | 'outfit-builder' | 'try-on'
+  source: 'daily-preview' | 'outfit-builder' | 'try-on' | 'imported'
   createdAt: string
 }

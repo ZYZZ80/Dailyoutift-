@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CalendarDays, Loader2, Sparkles, RefreshCw, ChevronRight } from 'lucide-react'
 import type { ClothingItem, OutfitSuggestion } from '../types'
 import { generateOutfit } from '../lib/claude'
@@ -33,10 +33,11 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
   const [generating, setGenerating] = useState<string | null>(null) // date being generated
   const [error, setError] = useState('')
   const [occasions, setOccasions] = useState<Record<string, string>>({})
+  const [localOutfits, setLocalOutfits] = useState<Record<string, OutfitSuggestion>>({})
 
   const todayKey = localDateKey()
   const weekDates = weekDatesFor()
-  const outfitMap = Object.fromEntries(outfits.map((o) => [o.date, o]))
+  const outfitMap = useMemo(() => ({ ...Object.fromEntries(outfits.map((o) => [o.date, o])), ...localOutfits }), [outfits, localOutfits])
   const wardrobeMap = Object.fromEntries(wardrobe.map((item) => [item.id, item]))
 
   function getOccasion(date: string, i: number) {
@@ -145,6 +146,7 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
       const result = validateWeeklyResult(await generateOutfit(availableWardrobe, date, config, occasion), usage, blockedSignatures, date, occasion)
       const saved = { id: outfitMap[date]?.id ?? crypto.randomUUID(), ...result, generatedAt: new Date().toISOString() }
       if (!userId) throw new Error('Please sign in before saving outfits.')
+      setLocalOutfits((prev) => ({ ...prev, [date]: saved }))
       saveOutfit(saved)
       onUpdate()
       await saveOutfitCloud(userId, saved)
@@ -182,6 +184,7 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
         const result = validateWeeklyResult(await generateOutfit(availableWardrobe, date, config, occasion), rollingUsage, rollingSignatures, date, occasion)
         const saved = { id: outfitMap[date]?.id ?? crypto.randomUUID(), ...result, generatedAt: new Date().toISOString() }
         if (!userId) throw new Error('Please sign in before saving outfits.')
+        setLocalOutfits((prev) => ({ ...prev, [date]: saved }))
         saveOutfit(saved)
         onUpdate()
         await saveOutfitCloud(userId, saved)

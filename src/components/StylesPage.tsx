@@ -1,33 +1,43 @@
-import { Download, ImageOff, Images, Search, Sparkles, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { Download, ImageOff, Images, Loader2, Search, Sparkles, Trash2, Upload } from 'lucide-react'
+import { useRef, useState } from 'react'
 import type { ClothingItem, StyleImage } from '../types'
 import Img from './Img'
+import { convertImageFileToJpegDataUrl } from '../lib/image'
+import { getStyles, saveStyles } from '../lib/storage'
+import { saveStyleCloud, uploadStyleImage } from '../lib/cloud'
 
 interface Props {
   styles: StyleImage[]
   wardrobe: ClothingItem[]
+  userId?: string
   onDelete?: (styleId: string) => void
+  onSaved?: () => void
 }
 
 const SOURCE_LABEL: Record<StyleImage['source'], string> = {
   'daily-preview': 'Daily try-on',
   'outfit-builder': 'Outfit builder',
   'try-on': 'Try before buy',
+  imported: 'Imported design',
 }
 
 function getSourceLabel(source: StyleImage['source']) {
   return SOURCE_LABEL[source] ?? 'Generated style'
 }
 
-type Filter = 'all' | 'outfit-preview' | 'try-on'
+type Filter = 'all' | 'outfit-preview' | 'try-on' | 'imported'
 
-export default function StylesPage({ styles, wardrobe, onDelete }: Props) {
+export default function StylesPage({ styles, wardrobe, userId, onDelete, onSaved }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
   const [search, setSearch] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importMsg, setImportMsg] = useState('')
+  const importRef = useRef<HTMLInputElement>(null)
   const wardrobeMap = Object.fromEntries(wardrobe.map((item) => [item.id, item]))
   const sourceFilteredStyles = styles.filter((style) => {
     if (filter === 'all') return true
     if (filter === 'try-on') return style.source === 'try-on'
+    if (filter === 'imported') return style.source === 'imported'
     return style.source === 'daily-preview' || style.source === 'outfit-builder'
   })
   const searchTerm = search.trim().toLowerCase()
@@ -45,7 +55,53 @@ export default function StylesPage({ styles, wardrobe, onDelete }: Props) {
     { id: 'all', label: 'All', count: styles.length },
     { id: 'outfit-preview', label: 'Outfit preview', count: styles.filter((s) => s.source === 'daily-preview' || s.source === 'outfit-builder').length },
     { id: 'try-on', label: 'Try-on', count: styles.filter((s) => s.source === 'try-on').length },
+    { id: 'imported', label: 'Imported', count: styles.filter((s) => s.source === 'imported').length },
   ]
+
+  async function importPictures(files: FileList | null) {
+    const selected = Array.from(files ?? []).filter((file) => file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name))
+    if (selected.length === 0) return
+
+    setImporting(true)
+    setImportMsg('')
+    try {
+      const createdAt = new Date().toISOString()
+      const localStyles = await Promise.all(selected.map(async (file, index) => {
+        const converted = await convertImageFileToJpegDataUrl(file, 1200, 0.75)
+        return {
+          id: crypto.randomUUID(),
+          image: converted.dataUrl,
+          itemIds: [],
+          source: 'imported' as const,
+          createdAt: new Date(Date.now() - index).toISOString() || createdAt,
+        }
+      }))
+
+      saveStyles([...localStyles, ...getStyles()])
+      onSaved?.()
+
+      if (userId) {
+        const cloudStyles: StyleImage[] = []
+        for (const style of localStyles) {
+          const imageUrl = await uploadStyleImage(userId, style.id, style.image)
+          const cloudStyle = { ...style, image: imageUrl }
+          await saveStyleCloud(userId, cloudStyle)
+          cloudStyles.push(cloudStyle)
+        }
+        const importedIds = new Set<string>(localStyles.map((style) => style.id))
+        saveStyles([...cloudStyles, ...getStyles().filter((style) => !importedIds.has(style.id))])
+        onSaved?.()
+        setImportMsg(`Imported ${cloudStyles.length} generated picture${cloudStyles.length === 1 ? '' : 's'} to your account.`)
+      } else {
+        setImportMsg(`Imported ${localStyles.length} generated picture${localStyles.length === 1 ? '' : 's'} locally.`)
+      }
+    } catch (error) {
+      setImportMsg(error instanceof Error ? error.message : 'Could not import generated pictures.')
+    } finally {
+      setImporting(false)
+      if (importRef.current) importRef.current.value = ''
+    }
+  }
 
   function downloadStyle(style: StyleImage) {
     const a = document.createElement('a')
@@ -56,10 +112,34 @@ export default function StylesPage({ styles, wardrobe, onDelete }: Props) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-semibold text-charcoal">Styles History</h2>
-        <p className="text-sm text-gray-400 mt-0.5">{styles.length} saved generated picture{styles.length === 1 ? '' : 's'} from daily outfits, builder designs, and try-ons</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-2xl font-semibold text-charcoal">Styles History</h2>
+          <p className="text-sm text-gray-400 mt-0.5">{styles.length} saved generated picture{styles.length === 1 ? '' : 's'} from daily outfits, builder designs, and try-ons</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => importRef.current?.click()}
+          disabled={importing}
+          className="inline-flex items-center gap-2 btn-coral px-4 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50"
+        >
+          {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          Import pictures
+        </button>
+        <input
+          ref={importRef}
+          type="file"
+          accept="image/*,.heic,.heif"
+          multiple
+          className="hidden"
+          onChange={(event) => void importPictures(event.target.files)}
+        />
       </div>
+      {importMsg && (
+        <div className="bg-white border border-gray-100 rounded-2xl px-4 py-3 text-sm text-gray-500">
+          {importMsg}
+        </div>
+      )}
 
       <div className="space-y-3">
         <div className="relative">

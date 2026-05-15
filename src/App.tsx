@@ -75,6 +75,28 @@ function remapItemIds(ids: string[], idMap: Record<string, string>) {
   return ids.map((id) => idMap[id] ?? id)
 }
 
+function mergeOutfitsForDisplay(cloudOutfits: OutfitSuggestion[], localOutfits: OutfitSuggestion[]) {
+  const byDate = new Map<string, OutfitSuggestion>()
+  ;[...localOutfits, ...cloudOutfits].forEach((outfit) => {
+    const current = byDate.get(outfit.date)
+    if (!current || outfit.generatedAt > current.generatedAt) byDate.set(outfit.date, outfit)
+  })
+  return [...byDate.values()].sort((a, b) => b.date.localeCompare(a.date) || b.generatedAt.localeCompare(a.generatedAt))
+}
+
+function mergeStylesForDisplay(cloudStyles: StyleImage[], localStyles: StyleImage[]) {
+  const seen = new Set<string>()
+  return [...localStyles, ...cloudStyles]
+    .filter((style) => style.image)
+    .filter((style) => {
+      const key = `${style.id}:${style.image}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(() => getConfig())
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -232,7 +254,7 @@ export default function App() {
           const localOutfits = getOutfits()
           const cloudOutfits = data.outfits
           const localOnlyOutfits = localOutfits.filter((lo) => !cloudOutfits.some((co) => co.id === lo.id || co.date === lo.date))
-          const finalOutfits = cloudOutfits.length > 0 ? cloudOutfits : localOutfits
+          const finalOutfits = mergeOutfitsForDisplay(cloudOutfits, localOutfits)
           setOutfits(finalOutfits)
           setLocalImportOutfits([])
           if (finalOutfits.length > 0) saveOutfitsSnapshot(finalOutfits)
@@ -255,7 +277,7 @@ export default function App() {
           const localStyles = getStyles()
           const cloudStyles = data.styles
           const localOnlyStyles = localStyles.filter((ls) => !cloudStyles.some((cs) => cs.id === ls.id || cs.image === ls.image))
-          const finalStyles = cloudStyles.length > 0 ? cloudStyles : localStyles
+          const finalStyles = mergeStylesForDisplay(cloudStyles, localStyles)
           setStyles(finalStyles)
           setLocalImportStyles([])
           if (finalStyles.length > 0) saveStyles(finalStyles)
@@ -443,7 +465,7 @@ export default function App() {
       {tab === 'wardrobe' && <WardrobePage wardrobe={wardrobe} config={config} onUpdate={refresh} userId={user?.id} />}
       {tab === 'build' && <OutfitBuilderPage wardrobe={wardrobe} config={config} userId={user?.id} onSaved={refresh} />}
       {tab === 'tryon' && <TryOnPage config={config} userId={user?.id} onSaved={refresh} />}
-      {tab === 'styles' && <StylesPage styles={allStyles} wardrobe={wardrobe} onDelete={handleDeleteStyle} />}
+      {tab === 'styles' && <StylesPage styles={allStyles} wardrobe={wardrobe} userId={user?.id} onDelete={handleDeleteStyle} onSaved={refresh} />}
       {tab === 'week' && <WeekPlanPage wardrobe={wardrobe} outfits={outfits} config={config} onUpdate={refresh} userId={user?.id} />}
       {tab === 'settings' && user && <SettingsPage user={user} config={config} counts={{ wardrobe: wardrobe.length, outfits: outfits.length, styles: styleCount }} onChangeProvider={handleReset} onSignOut={handleSignOut} />}
       {tab === 'legal' && <LegalPage />}

@@ -196,7 +196,7 @@ function isLikelyExpiredImageUrl(value: string) {
 function rowToStyle(row: Record<string, unknown>): StyleImage {
   const rawSource = String(row.source ?? row.type ?? row.kind ?? 'daily-preview')
   const source: StyleImage['source'] =
-    rawSource === 'outfit-builder' || rawSource === 'try-on' || rawSource === 'daily-preview' || rawSource === 'tryon'
+    rawSource === 'outfit-builder' || rawSource === 'try-on' || rawSource === 'daily-preview' || rawSource === 'tryon' || rawSource === 'imported'
       ? (rawSource === 'tryon' ? 'try-on' : rawSource)
       : 'daily-preview'
   const id = String(row.id)
