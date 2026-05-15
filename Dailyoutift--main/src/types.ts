@@ -5,7 +5,7 @@ export interface ClothingItem {
   name: string
   category: ClothingCategory
   color: string
-  image: string // base64 data URL or Firebase Storage URL
+  image: string // data URL cache or Supabase Storage URL
   tags: string[]
   uploadedAt: string
   wearCount?: number   // times worn since last wash
@@ -20,7 +20,14 @@ export interface OutfitSuggestion {
   styleNotes: string
   occasion: string
   generatedAt: string
-  previewImage?: string // AI-generated try-on photo or Firebase Storage URL
-  previewGeneratedAt?: string
-  previewSource?: 'auto' | 'manual'
+  previewImage?: string // AI-generated try-on photo
+}
+
+export interface StyleImage {
+  id: string
+  image: string
+  itemIds: string[]
+  outfitId?: string
+  source: 'daily-preview' | 'outfit-builder' | 'try-on'
+  createdAt: string
 }

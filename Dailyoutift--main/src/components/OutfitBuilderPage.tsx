@@ -1,26 +1,52 @@
-import { useState, useCallback } from 'react'
-import { Wand2, X, Download, RefreshCw, User, CheckCircle2, ImageOff, Loader2 } from 'lucide-react'
-import type { ClothingItem } from '../types'
+import { useState, useCallback, useEffect } from 'react'
+import { Wand2, X, Download, RefreshCw, User, CheckCircle2, ImageOff, Sparkles } from 'lucide-react'
+import type { ClothingItem, StyleImage } from '../types'
 import type { AppConfig } from '../lib/storage'
-import { getProfilePhotos } from '../lib/storage'
+import { getProfilePhotos, getStyles, saveStyles } from '../lib/storage'
 import { generateOutfitLook } from '../lib/preview'
+import { saveStyleCloud, uploadStyleImage } from '../lib/cloud'
+import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 
 interface Props {
   wardrobe: ClothingItem[]
   config: AppConfig
+  userId?: string
+  onSaved?: () => void
 }
 
 const CATEGORY_ORDER = ['outerwear', 'top', 'bottom', 'dress', 'shoes', 'accessory']
 
-export default function OutfitBuilderPage({ wardrobe, config }: Props) {
+export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [useProfilePhoto, setUseProfilePhoto] = useState(false)
-  const [generating, setGenerating] = useState(false)
   const [resultImage, setResultImage] = useState<string | null>(null)
   const [error, setError] = useState('')
-
-  const profilePhotos = getProfilePhotos()
+  const [profilePhotos, setProfilePhotos] = useState<string[]>(() => getProfilePhotos())
   const hasProfilePhoto = profilePhotos.length > 0
+
+  const job = useGenerationJob()
+  const isMyJob = job?.kind === 'outfit-build'
+  const generating = isMyJob && job?.status === 'running'
+
+  // Reflect job result/error in this page
+  useEffect(() => {
+    if (isMyJob && job?.status === 'done' && job.result) {
+      setResultImage(job.result.imageBase64)
+      setError('')
+    } else if (isMyJob && job?.status === 'error') {
+      setError(`Generation failed: ${(job.error ?? '').slice(0, 100)}`)
+    }
+  }, [job?.id, job?.status])
+
+  useEffect(() => {
+    const onFocus = () => setProfilePhotos(getProfilePhotos())
+    window.addEventListener('daily-stylist-profile-photos', onFocus)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('daily-stylist-profile-photos', onFocus)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [])
 
   const sorted = [...wardrobe].sort((a, b) =>
     CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category)
@@ -38,27 +64,53 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
 
   const selectedItems = wardrobe.filter((i) => selectedIds.has(i.id))
 
+  async function saveBuilderStyle(image: string, items: ClothingItem[]): Promise<StyleImage> {
+    const style: StyleImage = {
+      id: crypto.randomUUID(),
+      image,
+      itemIds: items.map((item) => item.id),
+      source: 'outfit-builder',
+      createdAt: new Date().toISOString(),
+    }
+
+    saveStyles([style, ...getStyles()])
+    onSaved?.()
+
+    if (!userId) return style
+
+    try {
+      const imageUrl = await uploadStyleImage(userId, style.id, image)
+      const cloudStyle = { ...style, image: imageUrl }
+      await saveStyleCloud(userId, cloudStyle)
+      saveStyles([cloudStyle, ...getStyles().filter((item) => item.id !== style.id)])
+      onSaved?.()
+      return cloudStyle
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('Outfit builder cloud save failed; kept local recovery copy:', message)
+      return style
+    }
+  }
+
   async function handleGenerate() {
-    if (selectedIds.size === 0) return
-    setGenerating(true)
+    if (selectedIds.size === 0 || generating) return
     setError('')
     setResultImage(null)
-    try {
-      const profilePhoto = (useProfilePhoto && hasProfilePhoto) ? profilePhotos[0] : null
-      const image = await generateOutfitLook(selectedItems, profilePhoto, config)
-      setResultImage(image)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (msg.includes('quota') || msg.includes('429')) {
-        setError('AI quota exceeded — try again later or switch to a different provider in Settings.')
-      } else if (msg.includes('No image')) {
-        setError('The AI didn\'t generate an image. Try selecting fewer items or different ones.')
-      } else {
-        setError(`Generation failed: ${msg.slice(0, 100)}`)
-      }
-    } finally {
-      setGenerating(false)
-    }
+
+    const items = [...selectedItems]
+    const profilePhoto = (useProfilePhoto && hasProfilePhoto) ? profilePhotos[0] : null
+    const cfg = config
+
+    generationQueue.start({
+      kind: 'outfit-build',
+      origin: 'build',
+      label: `Building outfit from ${items.length} item${items.length !== 1 ? 's' : ''}`,
+      runner: async () => {
+        const generatedImage = await generateOutfitLook(items, profilePhoto, cfg)
+        const savedStyle = await saveBuilderStyle(generatedImage, items)
+        return { imageBase64: savedStyle.image }
+      },
+    })
   }
 
   function handleDownload() {
@@ -132,12 +184,12 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
           <button
             onClick={handleGenerate}
             disabled={generating}
-            className="w-full bg-charcoal text-white rounded-xl py-3 text-sm font-semibold hover:bg-black transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+            className="w-full btn-sky rounded-xl py-3 text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2"
           >
             {generating ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Generating photo…
+                <Sparkles className="w-4 h-4 animate-pulse" />
+                Generating in background…
               </>
             ) : (
               <>
@@ -146,6 +198,31 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
               </>
             )}
           </button>
+        </div>
+      )}
+
+      {/* Skeleton while generating */}
+      {generating && (
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div
+            className="aspect-[3/4] w-full animate-shimmer"
+            style={{
+              backgroundImage:
+                'linear-gradient(90deg, #f3f4f6 0px, #fafafa 200px, #f3f4f6 400px)',
+              backgroundSize: '800px 100%',
+            }}
+          />
+          <div className="p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 bg-blush rounded-full animate-pulse" />
+              <p className="text-xs text-gray-500 font-medium">
+                Building your outfit — feel free to browse other tabs
+              </p>
+            </div>
+            <p className="text-[11px] text-gray-300">
+              You'll get a notification when it's ready ✨
+            </p>
+          </div>
         </div>
       )}
 
@@ -163,7 +240,7 @@ export default function OutfitBuilderPage({ wardrobe, config }: Props) {
           <div className="flex gap-2 p-3">
             <button
               onClick={handleDownload}
-              className="flex-1 flex items-center justify-center gap-2 bg-charcoal text-white rounded-xl py-2.5 text-sm font-medium hover:bg-black transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 btn-coral rounded-xl py-2.5 text-sm font-medium"
             >
               <Download className="w-4 h-4" />
               Save Photo

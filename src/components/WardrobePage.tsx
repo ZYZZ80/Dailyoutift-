@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Plus, Trash2, Tag, Download, Upload } from 'lucide-react'
+import { Plus, Trash2, Tag, Download, Upload, Search } from 'lucide-react'
 import type { ClothingItem, ClothingCategory } from '../types'
 import { exportBackup, importBackup, removeClothingItem, type AppConfig } from '../lib/storage'
 import { removeItemCloud, addItemCloud } from '../lib/cloud'
@@ -28,6 +28,7 @@ const FILTER_OPTIONS: (ClothingCategory | 'all' | 'wash')[] = ['all', 'wash', 't
 export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Props) {
   const [showUpload, setShowUpload] = useState(false)
   const [filter, setFilter] = useState<ClothingCategory | 'all' | 'wash'>('all')
+  const [search, setSearch] = useState('')
   const [restoreMsg, setRestoreMsg] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
 
@@ -49,10 +50,19 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
 
   const needsWashCount = wardrobe.filter(itemNeedsWash).length
 
-  const filtered =
+  const baseFiltered =
     filter === 'all' ? wardrobe :
     filter === 'wash' ? wardrobe.filter(itemNeedsWash) :
     wardrobe.filter((item) => item.category === filter)
+  const searchTerm = search.trim().toLowerCase()
+  const filtered = searchTerm
+    ? baseFiltered.filter((item) => [
+        item.name,
+        item.color,
+        item.category,
+        ...item.tags,
+      ].some((value) => value.toLowerCase().includes(searchTerm)))
+    : baseFiltered
 
   function handleDelete(id: string) {
     removeClothingItem(id)
@@ -95,7 +105,7 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
           <input ref={importRef} type="file" accept=".json,application/json" className="hidden"
             onChange={(e) => { if (e.target.files?.[0]) handleImport(e.target.files[0]); e.target.value = '' }} />
           <button onClick={() => setShowUpload(true)}
-            className="flex items-center gap-2 bg-charcoal text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black transition-colors">
+            className="flex items-center gap-2 btn-sky px-4 py-2.5 rounded-xl text-sm font-medium">
             <Plus className="w-4 h-4" /> Add Item
           </button>
         </div>
@@ -119,17 +129,28 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex gap-2 flex-wrap">
+      {/* Search + filters */}
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, color, or tag"
+            className="w-full bg-white border border-gray-200 rounded-2xl pl-10 pr-4 py-3 text-sm text-charcoal placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-charcoal/10 focus:border-charcoal/30"
+          />
+        </div>
+        <div className="flex gap-2 flex-wrap">
         {FILTER_OPTIONS.map((f) => (
           <button key={f} onClick={() => setFilter(f)}
             className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium transition-colors capitalize ${
-              filter === f ? 'bg-charcoal text-white' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
+              filter === f ? 'btn-coral' : 'bg-white text-gray-500 hover:bg-gray-100 border border-gray-200'
             }`}>
             {f === 'wash' && '🧺 '}
             {f === 'wash' ? `Needs wash${needsWashCount > 0 ? ` (${needsWashCount})` : ''}` : f}
           </button>
         ))}
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -139,6 +160,7 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
           </div>
           <p className="text-gray-400 text-sm">
             {wardrobe.length === 0 ? 'No clothes yet — add your first item!' :
+             searchTerm ? 'No items match your search.' :
              filter === 'wash' ? 'All clean! No items need washing.' :
              'No items in this category'}
           </p>

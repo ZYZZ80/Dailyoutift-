@@ -3,6 +3,7 @@ import type OpenAIType from 'openai'
 import type { GoogleGenerativeAI as GoogleGenerativeAIType } from '@google/generative-ai'
 import type { AppConfig } from './storage'
 import type { ClothingItem } from '../types'
+import { authFetch } from './authFetch'
 
 let _OpenAI: typeof OpenAIType | null = null
 async function getOpenAIClass() {
@@ -20,6 +21,41 @@ async function base64ToFile(dataUrl: string, filename: string): Promise<File> {
   const res = await fetch(dataUrl)
   const blob = await res.blob()
   return new File([blob], filename, { type: blob.type || 'image/jpeg' })
+}
+
+async function readApiJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text) as Record<string, unknown>
+  } catch {
+    throw new Error(`AI server returned ${res.status} with an unreadable response.`)
+  }
+}
+
+function apiErrorMessage(data: Record<string, unknown>, status: number): string {
+  const details = typeof data.details === 'string' ? data.details : ''
+  const error = typeof data.error === 'string' ? data.error : ''
+  return details || error || `AI server error ${status}`
+}
+
+function outfitItemPayload(items: ClothingItem[]) {
+  return items.map((i) => ({
+    name: i.name,
+    color: i.color,
+    category: i.category,
+    image: i.image,
+  }))
+}
+
+function strictOutfitPrompt(outfitDesc: string): string {
+  return [
+    'Create a realistic virtual try-on using the provided person photo as the identity reference.',
+    'Identity lock: preserve the exact face, facial hair, glasses, hairstyle, hairline, skin tone, and body proportions. Do not beautify, age, change ethnicity, or change facial features.',
+    `Clothing lock: dress the person in exactly these wardrobe items: ${outfitDesc}.`,
+    'Do not substitute garment types, colors, or patterns. If the outfit says shirt, it must not become a tank top. If it says trousers or pants, they must not become shorts.',
+    'Full body, clean light background, professional fashion photo, photorealistic.',
+  ].join(' ')
 }
 
 async function describePersonWithGemini(profilePhoto: string, apiKey: string): Promise<string> {
@@ -43,17 +79,18 @@ export async function generateOutfitLook(
   const outfitDesc = items.map((i) => `${i.name} (${i.color} ${i.category})`).join(', ')
 
   if (config.provider === 'proxy') {
-    const res = await fetch('/api/ai', {
+    const res = await authFetch('/api/ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: 'image-gen',
-        items: items.map((i) => ({ name: i.name, color: i.color, category: i.category })),
+        items: outfitItemPayload(items),
         profileBase64: profilePhoto ?? undefined,
       }),
     })
-    if (!res.ok) throw new Error(`proxy ${res.status}`)
-    const { imageBase64 } = await res.json()
+    const data = await readApiJson(res)
+    if (!res.ok) throw new Error(apiErrorMessage(data, res.status))
+    const { imageBase64 } = data
     return imageBase64 as string
   }
 
@@ -75,7 +112,7 @@ export async function generateOutfitLook(
       const base64Data = profilePhoto.includes(',') ? profilePhoto.split(',')[1] : profilePhoto
       const mimeType = profilePhoto.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
       parts.push({ inlineData: { data: base64Data, mimeType } })
-      parts.push({ text: `Generate a realistic full-body fashion photo of this person wearing this outfit: ${outfitDesc}. Preserve the person's exact appearance. Professional studio lighting, clean white background.` })
+      parts.push({ text: strictOutfitPrompt(outfitDesc) })
     } else {
       parts.push({ text: `Create a professional fashion flat-lay photo of these clothing items arranged stylishly: ${outfitDesc}. Clean white background, top-down editorial view, high quality fashion photography.` })
     }
@@ -101,7 +138,7 @@ export async function generateOutfitLook(
     const response = await client.images.edit({
       model: 'gpt-image-1',
       image: imageFile,
-      prompt: `Show this person wearing: ${outfitDesc}. Full body, clean white background, professional fashion photo.`,
+      prompt: strictOutfitPrompt(outfitDesc),
       size: '1024x1536',
     })
     const b64 = response.data?.[0]?.b64_json
@@ -137,6 +174,21 @@ export async function generateOutfitPreview(
 ): Promise<string> {
   const outfitDesc = outfitItems.map((i) => `${i.name} (${i.color} ${i.category})`).join(', ')
 
+  if (config.provider === 'proxy') {
+    const res = await authFetch('/api/ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'image-gen',
+        items: outfitItemPayload(outfitItems),
+        profileBase64: profilePhoto,
+      }),
+    })
+    const data = await readApiJson(res)
+    if (!res.ok) throw new Error(apiErrorMessage(data, res.status))
+    return data.imageBase64 as string
+  }
+
   if (config.provider === 'gemini') {
     const personDesc = await describePersonWithGemini(profilePhoto, config.apiKey)
     const GoogleGenerativeAI = await getGoogleGenAIClass()
@@ -149,7 +201,7 @@ export async function generateOutfitPreview(
         role: 'user',
         parts: [
           { inlineData: { data: base64Data, mimeType } },
-          { text: `Generate a full-body fashion photo of a person matching this description: ${personDesc}. They are wearing: ${outfitDesc}. Style: editorial fashion photography, clean white background, professional lighting.` },
+          { text: `${strictOutfitPrompt(outfitDesc)} Person reference details to preserve: ${personDesc}.` },
         ],
       }],
       generationConfig: { responseModalities: ['IMAGE', 'TEXT'] } as Record<string, unknown>,
@@ -172,7 +224,7 @@ export async function generateOutfitPreview(
   const response = await client.images.edit({
     model: 'gpt-image-1',
     image: imageFile,
-    prompt: `Show this exact person wearing this complete outfit: ${outfitDesc}. Full body fashion photo, clean white background, professional studio lighting, photorealistic.`,
+    prompt: strictOutfitPrompt(outfitDesc),
     size: '1024x1536',
   })
 

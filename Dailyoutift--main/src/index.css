@@ -26,3 +26,25 @@ body {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+@layer components {
+  .btn-primary-vivid {
+    @apply bg-gradient-to-r from-charcoal via-charcoal to-coral text-white shadow-sm hover:shadow-md hover:brightness-105 transition-all;
+  }
+
+  .btn-coral {
+    @apply bg-gradient-to-r from-coral to-blush text-white shadow-sm hover:shadow-md hover:brightness-105 transition-all;
+  }
+
+  .btn-sky {
+    @apply bg-gradient-to-r from-skysoft to-violetsoft text-white shadow-sm hover:shadow-md hover:brightness-105 transition-all;
+  }
+
+  .btn-mint {
+    @apply bg-gradient-to-r from-mint to-sage text-white shadow-sm hover:shadow-md hover:brightness-105 transition-all;
+  }
+
+  .btn-sun {
+    @apply bg-gradient-to-r from-sun to-coral text-white shadow-sm hover:shadow-md hover:brightness-105 transition-all;
+  }
+}

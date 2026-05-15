@@ -13,13 +13,12 @@
     "@capacitor/cli": "^8.3.1",
     "@capacitor/core": "^8.3.1",
     "@google/generative-ai": "^0.24.1",
-    "firebase": "^12.12.1",
+    "@supabase/supabase-js": "^2.105.1",
     "heic-convert": "^2.1.0",
     "lucide-react": "^0.469.0",
     "openai": "^6.34.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "sharp": "^0.34.5",
     "vite-plugin-pwa": "^1.2.0"
   },
   "devDependencies": {
@@ -27,7 +26,9 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
+    "firebase-admin": "^13.8.0",
+    "postcss": "8.5.13",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"

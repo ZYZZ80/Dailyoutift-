@@ -1,13 +1,16 @@
 ﻿import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
-import { Images, Shirt, Sparkles, History, Settings, Menu, X, LogOut, Loader2, CalendarDays, Wand2, ShoppingBag } from 'lucide-react'
-import { getConfig, getWardrobe, saveConfig, getOutfits, getStyles, saveWardrobe, saveOutfitsSnapshot, saveStyles, type AppConfig } from './lib/storage'
+import { FileText, History, Shirt, Sparkles, Settings, Menu, X, LogOut, Loader2, CalendarDays, Wand2, ShoppingBag } from 'lucide-react'
+import { getConfig, getWardrobe, saveConfig, getOutfits, getStyles, saveWardrobe, saveOutfitsSnapshot, saveStyles, saveProfilePhotos, getProfilePhotos, type AppConfig } from './lib/storage'
 import { supabase, SUPABASE_ENABLED } from './lib/supabase'
 import type { User } from '@supabase/supabase-js'
 import { checkProxy } from './lib/claude'
-import { importLocalWardrobeToCloud, removeStyleCloud, saveConfigCloud, subscribeToUserData } from './lib/cloud'
+import { clearOutfitPreviewCloud, importLocalOutfitsToCloud, importLocalStylesToCloud, importLocalWardrobeToCloud, removeStyleCloud, saveConfigCloud, saveProfilePhotosCloud, subscribeToUserData, uploadProfilePhoto } from './lib/cloud'
 import type { ClothingItem, OutfitSuggestion, StyleImage } from './types'
 import LoginPage from './components/LoginPage'
 import GenerationStatusBar from './components/GenerationStatusBar'
+import OnboardingPage from './components/OnboardingPage'
+import { useGenerationJob } from './lib/generationQueue'
+import { localDateKey, previousDateKey } from './lib/dates'
 
 // Lazy-load every heavy page. Each chunk is tiny (1-13 KB) so loading the
 // first one is fast; we then preload the rest on idle so subsequent tab
@@ -16,35 +19,38 @@ const importApiKeySetup       = () => import('./components/ApiKeySetup')
 const importWardrobePage      = () => import('./components/WardrobePage')
 const importDailyOutfitPage   = () => import('./components/DailyOutfitPage')
 const importDashboardPage     = () => import('./components/DashboardPage')
-const importHistoryPage       = () => import('./components/HistoryPage')
 const importWeekPlanPage      = () => import('./components/WeekPlanPage')
 const importOutfitBuilderPage = () => import('./components/OutfitBuilderPage')
 const importStylesPage        = () => import('./components/StylesPage')
 const importTryOnPage         = () => import('./components/TryOnPage')
+const importSettingsPage      = () => import('./components/SettingsPage')
+const importLegalPage         = () => import('./components/LegalPage')
 
 const ApiKeySetup       = lazy(importApiKeySetup)
 const WardrobePage      = lazy(importWardrobePage)
 const DailyOutfitPage   = lazy(importDailyOutfitPage)
 const DashboardPage     = lazy(importDashboardPage)
-const HistoryPage       = lazy(importHistoryPage)
 const WeekPlanPage      = lazy(importWeekPlanPage)
 const OutfitBuilderPage = lazy(importOutfitBuilderPage)
 const StylesPage        = lazy(importStylesPage)
 const TryOnPage         = lazy(importTryOnPage)
+const SettingsPage      = lazy(importSettingsPage)
+const LegalPage         = lazy(importLegalPage)
 
-// Preload page chunks on idle so tab switches don't show Suspense fallback.
+// Preload page chunks slowly after first render. Eager preloading made iPad
+// Safari feel heavy because all pages and image logic warmed at once.
 function preloadAllPages() {
   const idle = (cb: () => void) => {
     const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback
     if (ric) ric(cb)
-    else setTimeout(cb, 200)
+    else setTimeout(cb, 2500)
   }
-  idle(() => { importDashboardPage(); importDailyOutfitPage(); importWardrobePage() })
-  idle(() => { importStylesPage(); importHistoryPage(); importTryOnPage() })
-  idle(() => { importOutfitBuilderPage(); importWeekPlanPage() })
+  setTimeout(() => idle(() => { importDashboardPage(); importWardrobePage() }), 1800)
+  setTimeout(() => idle(() => { importDailyOutfitPage(); importStylesPage() }), 3200)
+  setTimeout(() => idle(() => { importTryOnPage(); importOutfitBuilderPage(); importWeekPlanPage(); importSettingsPage(); importLegalPage() }), 4800)
 }
 
-type Tab = 'dashboard' | 'today' | 'wardrobe' | 'week' | 'history' | 'build' | 'styles' | 'tryon'
+type Tab = 'dashboard' | 'today' | 'wardrobe' | 'week' | 'build' | 'styles' | 'tryon' | 'settings' | 'legal'
 function isConfigured(c: AppConfig) {
   if (c.provider === 'proxy') return true
   if (c.provider === 'ollama') return c.ollamaUrl.length > 0 && c.ollamaModel.length > 0
@@ -55,6 +61,20 @@ function getInitials(name: string | null | undefined): string {
   if (!name) return 'A'
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
 }
+function getDailyStreak(outfits: OutfitSuggestion[]) {
+  const outfitDates = new Set(outfits.map((outfit) => outfit.date))
+  let streak = 0
+  let cursor = localDateKey()
+  while (outfitDates.has(cursor)) {
+    streak += 1
+    cursor = previousDateKey(cursor)
+  }
+  return streak
+}
+function remapItemIds(ids: string[], idMap: Record<string, string>) {
+  return ids.map((id) => idMap[id] ?? id)
+}
+
 export default function App() {
   const [config, setConfig] = useState<AppConfig>(() => getConfig())
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -69,16 +89,29 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(SUPABASE_ENABLED)
   const [cloudLoading, setCloudLoading] = useState(false)
   const [localImportItems, setLocalImportItems] = useState<ClothingItem[]>(() => getWardrobe())
+  const [localImportStyles, setLocalImportStyles] = useState<StyleImage[]>(() => getStyles())
+  const [localImportOutfits, setLocalImportOutfits] = useState<OutfitSuggestion[]>(() => getOutfits())
   const [importingLocal, setImportingLocal] = useState(false)
   const [importMsg, setImportMsg] = useState('')
-  const [importBannerDismissed, setImportBannerDismissed] = useState(false)
+  const [wardrobeImportDismissed, setWardrobeImportDismissed] = useState(false)
+  const [generatedImportDismissed, setGeneratedImportDismissed] = useState(false)
   const proxyChecked = useRef(false)
+  const autoImportingWardrobe = useRef(false)
+  const autoImportingOutfits = useRef(false)
+  const autoImportingStyles = useRef(false)
 
   const refresh = useCallback(() => {
-    // Cloud data auto-updates via Firestore subscription.
+    // Cloud data auto-updates via Supabase realtime subscription.
     // For any local-only state, force a re-read here.
     setWardrobe((prev) => [...prev])
+    setOutfits(getOutfits())
+    setStyles(getStyles())
   }, [])
+  const generationJob = useGenerationJob()
+
+  useEffect(() => {
+    if (generationJob?.status === 'done') refresh()
+  }, [generationJob?.id, generationJob?.status, refresh])
 
   useEffect(() => {
     if (proxyChecked.current) return
@@ -157,23 +190,94 @@ export default function App() {
           const local = getWardrobe()
           const localOnly = local.filter((li) => !cloudItems.some((ci) => ci.id === li.id))
 
-          if (cloudItems.length === 0 && local.length > 0) {
-            importLocalWardrobeToCloud(user.id, local).catch(() => {})
+          if (localOnly.length > 0 && !autoImportingWardrobe.current) {
+            autoImportingWardrobe.current = true
+            importLocalWardrobeToCloud(user.id, localOnly)
+              .then((result) => {
+                const remappedOutfits = getOutfits().map((outfit) => ({ ...outfit, itemIds: remapItemIds(outfit.itemIds, result.idMap) }))
+                const remappedStyles = getStyles().map((style) => ({ ...style, itemIds: remapItemIds(style.itemIds, result.idMap) }))
+                const importedOldIds = new Set(localOnly.map((item) => item.id))
+                const mergedWardrobe = [...getWardrobe().filter((item) => !importedOldIds.has(item.id)), ...result.items]
+                saveWardrobe(mergedWardrobe)
+                saveOutfitsSnapshot(remappedOutfits)
+                saveStyles(remappedStyles)
+                setWardrobe(mergedWardrobe)
+                setOutfits(remappedOutfits)
+                setStyles(remappedStyles)
+                setLocalImportItems([])
+              })
+              .catch(() => {})
+              .finally(() => { autoImportingWardrobe.current = false })
           }
 
           const finalWardrobe = cloudItems.length > 0 ? cloudItems : local
           setWardrobe(finalWardrobe)
-          setLocalImportItems(localOnly)
+          setLocalImportItems([])
           // Persist for instant first-paint next time
           saveWardrobe(finalWardrobe)
         }
         if (data.outfits) {
-          setOutfits(data.outfits)
-          saveOutfitsSnapshot(data.outfits)
+          const localOutfits = getOutfits()
+          const cloudOutfits = data.outfits
+          const localOnlyOutfits = localOutfits.filter((lo) => !cloudOutfits.some((co) => co.id === lo.id || co.date === lo.date))
+          const finalOutfits = cloudOutfits.length > 0 ? cloudOutfits : localOutfits
+          setOutfits(finalOutfits)
+          setLocalImportOutfits([])
+          if (finalOutfits.length > 0) saveOutfitsSnapshot(finalOutfits)
+
+          if (localOnlyOutfits.length > 0 && !autoImportingOutfits.current) {
+            autoImportingOutfits.current = true
+            importLocalOutfitsToCloud(user.id, localOnlyOutfits)
+              .then((result) => {
+                const importedOldIds = new Set(localOnlyOutfits.map((outfit) => outfit.id))
+                const merged = [...getOutfits().filter((outfit) => !importedOldIds.has(outfit.id)), ...result.items]
+                saveOutfitsSnapshot(merged)
+                setOutfits(merged)
+                setLocalImportOutfits([])
+              })
+              .catch(() => {})
+              .finally(() => { autoImportingOutfits.current = false })
+          }
         }
         if (data.styles) {
-          setStyles(data.styles)
-          saveStyles(data.styles)
+          const localStyles = getStyles()
+          const cloudStyles = data.styles
+          const localOnlyStyles = localStyles.filter((ls) => !cloudStyles.some((cs) => cs.id === ls.id || cs.image === ls.image))
+          const finalStyles = cloudStyles.length > 0 ? cloudStyles : localStyles
+          setStyles(finalStyles)
+          setLocalImportStyles([])
+          if (finalStyles.length > 0) saveStyles(finalStyles)
+
+          if (localOnlyStyles.length > 0 && !autoImportingStyles.current) {
+            autoImportingStyles.current = true
+            importLocalStylesToCloud(user.id, localOnlyStyles)
+              .then((result) => {
+                const importedOldIds = new Set(localOnlyStyles.map((style) => style.id))
+                const merged = [...getStyles().filter((style) => !importedOldIds.has(style.id)), ...result.items]
+                saveStyles(merged)
+                setStyles(merged)
+                setLocalImportStyles([])
+              })
+              .catch(() => {})
+              .finally(() => { autoImportingStyles.current = false })
+          }
+        }
+        if (data.profilePhotos) {
+          const accountPhotos = data.profilePhotos.filter(Boolean)
+          if (accountPhotos.length > 0) {
+            saveProfilePhotos(accountPhotos)
+          } else {
+            const localPhotos = getProfilePhotos().filter(Boolean)
+            if (localPhotos.length > 0) {
+              Promise.all(localPhotos.slice(0, 5).map((photo, index) => (
+                photo.startsWith('data:') || photo.startsWith('blob:')
+                  ? uploadProfilePhoto(user.id, photo, `profile-${index}`)
+                  : Promise.resolve(photo)
+              )))
+                .then((urls) => saveProfilePhotosCloud(user.id, urls).then(() => saveProfilePhotos(urls)))
+                .catch(() => {})
+            }
+          }
         }
         if (firstFetch) {
           setCloudLoading(false)
@@ -181,7 +285,7 @@ export default function App() {
         }
       },
       () => {
-        // Firebase error — fall back to localStorage so wardrobe is never blank
+        // Supabase error: fall back to localStorage so wardrobe is never blank.
         setWardrobe(getWardrobe())
         setCloudLoading(false)
       },
@@ -198,8 +302,18 @@ export default function App() {
     setImportingLocal(true)
     setImportMsg('')
     try {
-      const count = await importLocalWardrobeToCloud(user.id, localImportItems)
-      setImportMsg(`Imported ${count} local wardrobe item${count === 1 ? '' : 's'} to cloud.`)
+      const result = await importLocalWardrobeToCloud(user.id, localImportItems)
+      const importedOldIds = new Set(localImportItems.map((item) => item.id))
+      const mergedWardrobe = [...getWardrobe().filter((item) => !importedOldIds.has(item.id)), ...result.items]
+      const remappedOutfits = getOutfits().map((outfit) => ({ ...outfit, itemIds: remapItemIds(outfit.itemIds, result.idMap) }))
+      const remappedStyles = getStyles().map((style) => ({ ...style, itemIds: remapItemIds(style.itemIds, result.idMap) }))
+      saveWardrobe(mergedWardrobe)
+      saveOutfitsSnapshot(remappedOutfits)
+      saveStyles(remappedStyles)
+      setWardrobe(mergedWardrobe)
+      setOutfits(remappedOutfits)
+      setStyles(remappedStyles)
+      setImportMsg(`Imported ${result.count} local wardrobe item${result.count === 1 ? '' : 's'} to cloud.`)
       setLocalImportItems([])
     } catch (e) {
       setImportMsg(e instanceof Error ? e.message : 'Could not import local wardrobe.')
@@ -209,8 +323,43 @@ export default function App() {
   }
 
   function handleDeleteStyle(styleId: string) {
-    if (user) removeStyleCloud(user.id, styleId).catch(() => {})
+    if (user) {
+      const derivedOutfitId = styleId.startsWith('derived-') ? styleId.replace(/^derived-/, '') : ''
+      if (derivedOutfitId) clearOutfitPreviewCloud(user.id, derivedOutfitId).catch(() => {})
+      else removeStyleCloud(user.id, styleId).catch(() => {})
+    }
     setStyles((prev) => prev.filter((s) => s.id !== styleId))
+    if (styleId.startsWith('derived-')) {
+      const outfitId = styleId.replace(/^derived-/, '')
+      setOutfits((prev) => prev.map((outfit) => outfit.id === outfitId ? { ...outfit, previewImage: undefined } : outfit))
+    }
+  }
+
+  async function handleImportLocalGenerated() {
+    if (!user || (localImportStyles.length === 0 && localImportOutfits.length === 0)) return
+    setImportingLocal(true)
+    setImportMsg('')
+    try {
+      const [styleCount, outfitCount] = await Promise.all([
+        importLocalStylesToCloud(user.id, localImportStyles),
+        importLocalOutfitsToCloud(user.id, localImportOutfits),
+      ])
+      const importedOldStyleIds = new Set(localImportStyles.map((style) => style.id))
+      const importedOldOutfitIds = new Set(localImportOutfits.map((outfit) => outfit.id))
+      const mergedStyles = [...getStyles().filter((style) => !importedOldStyleIds.has(style.id)), ...styleCount.items]
+      const mergedOutfits = [...getOutfits().filter((outfit) => !importedOldOutfitIds.has(outfit.id)), ...outfitCount.items]
+      saveStyles(mergedStyles)
+      saveOutfitsSnapshot(mergedOutfits)
+      setStyles(mergedStyles)
+      setOutfits(mergedOutfits)
+      setImportMsg(`Imported ${styleCount.count} generated picture${styleCount.count === 1 ? '' : 's'} and ${outfitCount.count} outfit${outfitCount.count === 1 ? '' : 's'} to cloud.`)
+      setLocalImportStyles([])
+      setLocalImportOutfits([])
+    } catch (e) {
+      setImportMsg(e instanceof Error ? e.message : 'Could not import generated pictures.')
+    } finally {
+      setImportingLocal(false)
+    }
   }
   function handleReset() { saveConfig({ provider: 'openai', apiKey: '', ollamaUrl: 'http://localhost:11434', ollamaModel: 'moondream' }); setConfig(getConfig()) }
   async function handleSignOut() { if (supabase) await supabase.auth.signOut(); setUser(null) }
@@ -231,7 +380,7 @@ export default function App() {
     </Suspense>
   )
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = localDateKey()
   const todayOutfit = outfits.find((o) => o.date === today) ?? null
   const userName: string = user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? 'You'
   const userPhoto: string | null = user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null
@@ -251,7 +400,11 @@ export default function App() {
       createdAt: o.generatedAt,
     }))
   const allStyles: StyleImage[] = [...styles, ...derivedStyles]
+    .filter((style) => style.image)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const styleCount = allStyles.length
+  const dailyStreak = getDailyStreak(outfits)
+  const showOnboarding = tab === 'dashboard' && !cloudLoading && wardrobe.length === 0 && outfits.length === 0 && allStyles.length === 0
 
   const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <Sparkles className="w-5 h-5" strokeWidth={1.5} /> },
@@ -259,9 +412,10 @@ export default function App() {
     { id: 'wardrobe', label: 'Wardrobe', icon: <Shirt className="w-5 h-5" strokeWidth={1.5} />, badge: needsWashCount > 0 ? needsWashCount : undefined },
     { id: 'tryon',    label: 'Try Buy',  icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'build',    label: 'Builder',  icon: <Wand2 className="w-5 h-5" strokeWidth={1.5} /> },
-    { id: 'styles',   label: 'Styles',   icon: <Images className="w-5 h-5" strokeWidth={1.5} />, badge: styleCount > 0 ? styleCount : undefined },
+    { id: 'styles',   label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} />, badge: styleCount > 0 ? styleCount : undefined },
     { id: 'week',     label: 'Week',     icon: <CalendarDays className="w-5 h-5" strokeWidth={1.5} /> },
-    { id: 'history',  label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'settings', label: 'Settings', icon: <Settings className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'legal',    label: 'Privacy',  icon: <FileText className="w-5 h-5" strokeWidth={1.5} /> },
   ]
 
   const PageFallback = (
@@ -272,14 +426,15 @@ export default function App() {
 
   const pageContent = (
     <Suspense fallback={PageFallback}>
-      {tab === 'dashboard' && <DashboardPage wardrobe={wardrobe} outfits={outfits} styles={allStyles} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} onOpenTab={setTab} />}
-      {tab === 'today' && <DailyOutfitPage wardrobe={wardrobe} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} />}
+      {tab === 'dashboard' && (showOnboarding ? <OnboardingPage onAddFirstItem={() => setTab('wardrobe')} /> : <DashboardPage wardrobe={wardrobe} outfits={outfits} styles={allStyles} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} onOpenTab={setTab} />)}
+      {tab === 'today' && <DailyOutfitPage wardrobe={wardrobe} todayOutfit={todayOutfit} config={config} onOutfitGenerated={refresh} userId={user?.id} dailyStreak={dailyStreak} />}
       {tab === 'wardrobe' && <WardrobePage wardrobe={wardrobe} config={config} onUpdate={refresh} userId={user?.id} />}
-      {tab === 'build' && <OutfitBuilderPage wardrobe={wardrobe} config={config} userId={user?.id} />}
+      {tab === 'build' && <OutfitBuilderPage wardrobe={wardrobe} config={config} userId={user?.id} onSaved={refresh} />}
       {tab === 'tryon' && <TryOnPage config={config} userId={user?.id} onSaved={refresh} />}
       {tab === 'styles' && <StylesPage styles={allStyles} wardrobe={wardrobe} onDelete={handleDeleteStyle} />}
       {tab === 'week' && <WeekPlanPage wardrobe={wardrobe} outfits={outfits} config={config} onUpdate={refresh} userId={user?.id} />}
-      {tab === 'history' && <HistoryPage styles={allStyles} onDelete={handleDeleteStyle} />}
+      {tab === 'settings' && user && <SettingsPage user={user} config={config} counts={{ wardrobe: wardrobe.length, outfits: outfits.length, styles: styleCount }} onChangeProvider={handleReset} onSignOut={handleSignOut} />}
+      {tab === 'legal' && <LegalPage />}
     </Suspense>
   )
 
@@ -302,14 +457,14 @@ export default function App() {
         {NAV_ITEMS.map((item) => (
           <button key={item.id} onClick={() => { setTab(item.id); onClose?.() }}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-colors relative ${tab === item.id ? 'bg-white/10 text-white' : 'text-white/50 hover:bg-white/5 hover:text-white/80'}`}>
-            {tab === item.id && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-blush rounded-r-full" />}
+            {tab === item.id && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-gradient-to-b from-coral to-skysoft rounded-r-full" />}
             {item.icon}{item.label}
-            {item.badge !== undefined && item.badge > 0 && <span className="ml-auto bg-blush/70 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{item.badge > 99 ? '99+' : item.badge}</span>}
+            {item.badge !== undefined && item.badge > 0 && <span className="ml-auto bg-gradient-to-r from-coral to-sun text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{item.badge > 99 ? '99+' : item.badge}</span>}
           </button>
         ))}
       </nav>
       <div className="p-3 border-t border-white/10 space-y-1">
-        <button onClick={handleReset} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-white/70 transition-colors"><Settings className="w-4 h-4" />Change Provider</button>
+        <button onClick={() => { setTab('settings'); onClose?.() }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-white/70 transition-colors"><Settings className="w-4 h-4" />Settings</button>
         {SUPABASE_ENABLED && user && <button onClick={handleSignOut} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-red-400 transition-colors"><LogOut className="w-4 h-4" />Sign Out</button>}
       </div>
     </>)
@@ -321,26 +476,6 @@ export default function App() {
       {cloudLoading && (
         <div className="fixed top-0 inset-x-0 h-0.5 bg-blush/40 overflow-hidden z-40">
           <div className="h-full w-1/3 bg-blush animate-progress-slide" />
-        </div>
-      )}
-      {user && localImportItems.length > 0 && !importBannerDismissed && (
-        <div className="bg-amber-50 border-b border-amber-100 px-4 py-3 text-amber-800">
-          <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-            <p className="text-sm">
-              📦 Found {localImportItems.length} item{localImportItems.length === 1 ? '' : 's'} saved only in this browser — import to keep them on all devices.
-            </p>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {importMsg && <span className="text-xs text-amber-700">{importMsg}</span>}
-              <button
-                onClick={handleImportLocalWardrobe}
-                disabled={importingLocal}
-                className="bg-charcoal text-white px-3 py-2 rounded-xl text-xs font-medium disabled:opacity-50 whitespace-nowrap"
-              >
-                {importingLocal ? 'Importing…' : 'Import to cloud'}
-              </button>
-              <button onClick={() => setImportBannerDismissed(true)} className="text-amber-500 hover:text-amber-700 px-1 text-lg leading-none" title="Dismiss">×</button>
-            </div>
-          </div>
         </div>
       )}
       <div className="hidden md:flex min-h-screen">
@@ -356,7 +491,7 @@ export default function App() {
           <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <button onClick={() => setSidebarOpen(true)} className="p-1.5 hover:bg-gray-100 rounded-full mr-1"><Menu className="w-4 h-4 text-gray-400" /></button>
-              <div className="w-7 h-7 bg-charcoal rounded-lg flex items-center justify-center"><Sparkles className="w-4 h-4 text-white" strokeWidth={1.5} /></div>
+              <div className="w-7 h-7 bg-gradient-to-br from-charcoal to-coral rounded-lg flex items-center justify-center"><Sparkles className="w-4 h-4 text-white" strokeWidth={1.5} /></div>
               <span className="font-semibold text-charcoal text-sm">Daily Stylist</span>
               <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium uppercase">{PROVIDER_LABELS[config.provider]}</span>
             </div>
@@ -371,8 +506,8 @@ export default function App() {
                 className={`flex-1 flex flex-col items-center gap-1 py-3 relative transition-colors ${tab === item.id ? 'text-charcoal' : 'text-gray-400 hover:text-gray-600'}`}>
                 {item.icon}
                 <span className="text-[10px] font-medium">{item.label}</span>
-                {item.badge !== undefined && item.badge > 0 && <span className="absolute top-2.5 right-1/4 translate-x-1/2 bg-blush text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">{item.badge > 99 ? '99+' : item.badge}</span>}
-                {tab === item.id && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-charcoal rounded-full" />}
+                {item.badge !== undefined && item.badge > 0 && <span className="absolute top-2.5 right-1/4 translate-x-1/2 bg-gradient-to-r from-coral to-sun text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">{item.badge > 99 ? '99+' : item.badge}</span>}
+                {tab === item.id && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-gradient-to-r from-coral to-skysoft rounded-full" />}
               </button>
             ))}
           </div>

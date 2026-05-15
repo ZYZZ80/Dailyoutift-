@@ -1,4 +1,5 @@
-import type { ClothingItem, OutfitSuggestion } from '../types'
+import type { ClothingItem, OutfitSuggestion, StyleImage } from '../types'
+import { localDateKey } from './dates'
 
 const WARDROBE_KEY    = 'daily-stylist-wardrobe'
 const OUTFITS_KEY     = 'daily-stylist-outfits'
@@ -52,6 +53,7 @@ export function saveProfilePhotos(photos: string[]): void {
   localStorage.setItem(PHOTOS_KEY, JSON.stringify(trimmed))
   // Keep legacy key in sync (first photo)
   localStorage.setItem('daily-stylist-profile', trimmed[0] ?? '')
+  window.dispatchEvent(new CustomEvent('daily-stylist-profile-photos', { detail: trimmed }))
 }
 
 /** @deprecated Use getProfilePhotos()[0] */
@@ -81,7 +83,20 @@ export function getWardrobe(): ClothingItem[] {
 }
 
 export function saveWardrobe(items: ClothingItem[]): void {
-  localStorage.setItem(WARDROBE_KEY, JSON.stringify(items))
+  try {
+    localStorage.setItem(WARDROBE_KEY, JSON.stringify(items))
+  } catch (error) {
+    const isQuotaError =
+      error instanceof DOMException &&
+      (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED' || error.code === 22)
+    if (!isQuotaError) throw error
+
+    const compact = items.map((item) => ({
+      ...item,
+      image: item.image.startsWith('data:') ? '' : item.image,
+    }))
+    localStorage.setItem(WARDROBE_KEY, JSON.stringify(compact))
+  }
 }
 
 export function addClothingItem(item: ClothingItem): void {
@@ -94,7 +109,7 @@ export function removeClothingItem(id: string): void {
 
 /** Increment wearCount for each item in the outfit. */
 export function recordWear(itemIds: string[]): void {
-  const today = new Date().toISOString().split('T')[0]
+  const today = localDateKey()
   saveWardrobe(
     getWardrobe().map((item) =>
       itemIds.includes(item.id)
@@ -136,7 +151,7 @@ export function exportBackup(): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `daily-stylist-backup-${new Date().toISOString().split('T')[0]}.json`
+  a.download = `daily-stylist-backup-${localDateKey()}.json`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -163,22 +178,169 @@ export function getOutfits(): OutfitSuggestion[] {
   }
 }
 
-export function replaceOutfits(outfits: OutfitSuggestion[]): void {
-  localStorage.setItem(OUTFITS_KEY, JSON.stringify(outfits.slice(0, 90)))
-}
-
 export function saveOutfit(outfit: OutfitSuggestion): void {
   const outfits = getOutfits()
-  const existing = outfits.findIndex((o) => o.id === outfit.id)
+  const existing = outfits.findIndex((o) => o.date === outfit.date)
   if (existing >= 0) {
     outfits[existing] = outfit
   } else {
     outfits.unshift(outfit)
   }
-  const sorted = [...outfits].sort((a, b) => {
-    const ad = a.generatedAt || a.date
-    const bd = b.generatedAt || b.date
-    return bd.localeCompare(ad)
+  localStorage.setItem(OUTFITS_KEY, JSON.stringify(outfits.slice(0, 90)))
+}
+
+// ── Styles cache ───────────────────────────────────────────────────────────
+const STYLES_KEY = 'daily-stylist-styles'
+let stylesCache: StyleImage[] | null = null
+const LEGACY_STYLE_KEYS = [
+  'daily-stylist-style-images',
+  'daily-stylist-style-gallery',
+  'daily-stylist-generated-styles',
+  'daily-stylist-generated-pictures',
+  'daily-stylist-history',
+  'daily-stylist-tryons',
+  'daily-stylist-try-on',
+]
+
+function isImageValue(value: unknown): value is string {
+  return typeof value === 'string' && (
+    value.startsWith('data:image/') ||
+    value.startsWith('blob:') ||
+    value.includes('/storage/v1/object/public/') ||
+    value.includes('/storage/v1/render/image/public/') ||
+    /^https?:\/\/.+\.(png|jpe?g|webp)(\?|$)/i.test(value)
+  )
+}
+
+function normalizeStyleSource(value: unknown): StyleImage['source'] {
+  const raw = String(value ?? '').toLowerCase()
+  if (raw === 'try-on' || raw === 'tryon' || raw.includes('try')) return 'try-on'
+  if (raw === 'outfit-builder' || raw.includes('builder')) return 'outfit-builder'
+  return 'daily-preview'
+}
+
+function normalizeStyleRecord(record: unknown, fallbackId: string): StyleImage | null {
+  if (!record || typeof record !== 'object') return null
+  const row = record as Record<string, unknown>
+  const image =
+    row.image ??
+    row.imageUrl ??
+    row.url ??
+    row.previewImage ??
+    row.generatedImage ??
+    row.imageBase64 ??
+    row.result
+  if (!isImageValue(image)) return null
+  const rawItemIds = row.itemIds ?? row.item_ids ?? row.items
+  const itemIds = Array.isArray(rawItemIds)
+    ? rawItemIds.map((item) => typeof item === 'object' && item && 'id' in item ? String((item as { id: unknown }).id) : String(item))
+    : []
+  return {
+    id: String(row.id ?? row.styleId ?? fallbackId),
+    image,
+    itemIds,
+    outfitId: row.outfitId || row.outfit_id ? String(row.outfitId ?? row.outfit_id) : undefined,
+    source: normalizeStyleSource(row.source ?? row.type ?? row.kind),
+    createdAt: String(row.createdAt ?? row.created_at ?? row.generatedAt ?? row.date ?? row.timestamp ?? new Date().toISOString()),
+  }
+}
+
+function collectStyles(value: unknown, bucket: StyleImage[], prefix: string) {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => collectStyles(item, bucket, `${prefix}-${index}`))
+    return
+  }
+  const direct = normalizeStyleRecord(value, prefix)
+  if (direct) {
+    bucket.push(direct)
+    return
+  }
+  if (value && typeof value === 'object') {
+    Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+      if (isImageValue(child)) {
+        bucket.push({
+          id: `${prefix}-${key}`,
+          image: child,
+          itemIds: [],
+          source: normalizeStyleSource(prefix),
+          createdAt: new Date().toISOString(),
+        })
+      } else if (key.toLowerCase().includes('style') || key.toLowerCase().includes('history') || key.toLowerCase().includes('generated') || key.toLowerCase().includes('preview') || key.toLowerCase().includes('try')) {
+        collectStyles(child, bucket, `${prefix}-${key}`)
+      }
+    })
+  }
+}
+
+function getLegacyStyles(): StyleImage[] {
+  const found: StyleImage[] = []
+  const keys = new Set(LEGACY_STYLE_KEYS)
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (!key) continue
+      const lower = key.toLowerCase()
+      if (
+        lower.includes('style') ||
+        lower.includes('history') ||
+        lower.includes('generated') ||
+        lower.includes('preview') ||
+        lower.includes('tryon') ||
+        lower.includes('try-on')
+      ) keys.add(key)
+    }
+  } catch {
+    /* ignore */
+  }
+
+  keys.forEach((key) => {
+    try {
+      const raw = localStorage.getItem(key)
+      if (!raw) return
+      collectStyles(JSON.parse(raw), found, key)
+    } catch {
+      /* ignore invalid legacy values */
+    }
   })
-  replaceOutfits(sorted)
+  return found
+}
+
+export function getStyles(): StyleImage[] {
+  if (stylesCache) return stylesCache
+  try {
+    const current = JSON.parse(localStorage.getItem(STYLES_KEY) || '[]') as StyleImage[]
+    const merged = [...current, ...getLegacyStyles()]
+    const seen = new Set<string>()
+    stylesCache = merged
+      .filter((style) => style.image)
+      .filter((style) => {
+        const key = `${style.id}:${style.image}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    return stylesCache
+  } catch { return [] }
+}
+export function saveStyles(styles: StyleImage[]): void {
+  stylesCache = styles
+    .filter((style) => style.image)
+    .slice(0, 1000)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  try {
+    localStorage.setItem(STYLES_KEY, JSON.stringify(stylesCache))
+  } catch (error) {
+    const isQuotaError =
+      error instanceof DOMException &&
+      (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED' || error.code === 22)
+    if (!isQuotaError) throw error
+    stylesCache = styles.filter((style) => !style.image.startsWith('data:')).slice(0, 1000)
+    localStorage.setItem(STYLES_KEY, JSON.stringify(stylesCache))
+  }
+}
+
+// ── Cloud snapshot (full replace, used after cloud sync) ───────────────────
+export function saveOutfitsSnapshot(outfits: OutfitSuggestion[]): void {
+  localStorage.setItem(OUTFITS_KEY, JSON.stringify(outfits.slice(0, 90)))
 }

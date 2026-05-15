@@ -5,7 +5,7 @@ export interface ClothingItem {
   name: string
   category: ClothingCategory
   color: string
-  image: string // base64 data URL or Firebase Storage URL
+  image: string // data URL cache or Supabase Storage URL
   tags: string[]
   uploadedAt: string
   wearCount?: number   // times worn since last wash
