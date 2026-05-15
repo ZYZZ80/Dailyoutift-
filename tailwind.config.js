@@ -11,6 +11,11 @@ export default {
         blush: '#F2C4B0',
         sage: '#A8B5A0',
         charcoal: '#2C2C2C',
+        coral: '#FF7A6B',
+        skysoft: '#72A7FF',
+        violetsoft: '#9B7BFF',
+        mint: '#44C7A1',
+        sun: '#F7B955',
       },
       keyframes: {
         'slide-down': {

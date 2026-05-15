@@ -5,6 +5,8 @@ import type OpenAIType from 'openai'
 import type { GoogleGenerativeAI as GoogleGenerativeAIType } from '@google/generative-ai'
 import type { AppConfig } from './storage'
 import type { ClothingItem, OutfitSuggestion } from '../types'
+import { authFetch } from './authFetch'
+import { formatDateKey } from './dates'
 
 let _OpenAI: typeof OpenAIType | null = null
 async function getOpenAIClass(): Promise<typeof OpenAIType> {
@@ -192,9 +194,30 @@ function proxyErrorMessage(data: Record<string, unknown>, status: number): strin
   const details = typeof data.details === 'string' ? data.details : ''
   if (code === 'not_configured') return 'AI is not configured. Add OPENAI_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.'
   if (code === 'quota_exceeded') return 'Quota exceeded - the built-in AI quota is full, please try again tomorrow.'
+  if (code === 'free_limit_reached') return details || 'Free monthly AI limit reached. Upgrade to Pro to continue.'
+  if (code === 'missing_token' || code === 'invalid_token') return 'Please sign in again before using AI.'
   if (details) return details
   if (code) return code
   return `AI proxy error ${status}`
+}
+
+function outfitPrompt(day: string, date: string, occasion: string | undefined, weatherHint: string | undefined, wardrobeList: string) {
+  const occasionText = occasion || 'Casual'
+  const weatherLine = weatherHint ? `\n${weatherHint}` : ''
+  return `You are a practical personal stylist. Pick 2-4 items for ${day}, ${date} for a ${occasionText} occasion.${weatherLine}
+
+Rules:
+- Build a complete outfit with one top plus one bottom, or one dress.
+- Add shoes or accessories only when they fit the occasion and do not repeat a near-identical look.
+- Prefer items with lower weekly use; the app has already removed over-used pieces from the list.
+- Do not invent item IDs. Return only IDs from the wardrobe list.
+- Avoid repeating the exact same full outfit or color/category combination when alternatives exist.
+
+Wardrobe:
+${wardrobeList}
+
+Respond ONLY with valid JSON:
+{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasionText}"}`
 }
 
 /** Returns true if the /api/ai proxy endpoint is live and configured. */
@@ -208,7 +231,7 @@ export async function checkProxy(): Promise<boolean> {
 }
 
 async function proxyAnalyzeClothing(imageBase64: string) {
-  const res = await fetch('/api/ai', {
+  const res = await authFetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'analyze', imageBase64 }),
@@ -218,11 +241,11 @@ async function proxyAnalyzeClothing(imageBase64: string) {
   return data as { name: string; category: string; color: string; tags: string[] }
 }
 
-async function proxyGenerateOutfit(wardrobe: ClothingItem[], date: string, occasion?: string) {
-  const res = await fetch('/api/ai', {
+async function proxyGenerateOutfit(wardrobe: ClothingItem[], date: string, occasion?: string, weatherHint?: string) {
+  const res = await authFetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'outfit', wardrobe, date, occasion }),
+    body: JSON.stringify({ action: 'outfit', wardrobe, date, occasion, weatherHint }),
   })
   const data = await readProxyJson(res)
   if (!res.ok) {
@@ -283,13 +306,13 @@ export async function generateOutfit(
   date: string,
   config: AppConfig,
   occasion?: string,
+  weatherHint?: string,
 ): Promise<Omit<OutfitSuggestion, 'id' | 'generatedAt'>> {
-  if (config.provider === 'proxy') return proxyGenerateOutfit(wardrobe, date, occasion)
+  if (config.provider === 'proxy') return proxyGenerateOutfit(wardrobe, date, occasion, weatherHint)
 
-  const day = new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
-  const occasionHint = occasion ? ` for a ${occasion} occasion` : ''
+  const day = formatDateKey(date, { weekday: 'long' })
   const wardrobeList = wardrobe.map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-  const prompt = `You are a stylist. Pick 2-4 items for ${day}, ${date}${occasionHint}.\n\nWardrobe:\n${wardrobeList}\n\nRespond ONLY with valid JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasion ?? 'Casual'}"}`
+  const prompt = outfitPrompt(day, date, occasion, weatherHint, wardrobeList)
 
   if (config.provider === 'gemini') {
     try {

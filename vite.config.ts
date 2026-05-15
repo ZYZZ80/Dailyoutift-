@@ -24,16 +24,13 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      // 'prompt' instead of 'autoUpdate' — the SW no longer takes over silently
-      // and cause page-reload feelings. The user gets the new version on the
-      // next clean reload they choose to do.
-      registerType: 'prompt',
+      // iPad Safari was holding old app bundles too long. Auto-update makes the
+      // newest deployment take control after a normal reload.
+      registerType: 'autoUpdate',
       workbox: {
         cleanupOutdatedCaches: true,
-        // Disable skipWaiting + clientsClaim — they cause the in-flight page to
-        // be hot-swapped under the user's feet, looking like a refresh.
-        clientsClaim: false,
-        skipWaiting: false,
+        clientsClaim: true,
+        skipWaiting: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
         navigateFallbackDenylist: [/^\/api/],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,

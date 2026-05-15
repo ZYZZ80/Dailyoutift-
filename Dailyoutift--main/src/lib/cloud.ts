@@ -1,61 +1,112 @@
-/**
- * Cloud sync layer — Supabase Database + Storage
- * All functions are no-ops if Supabase is not configured.
- */
 import { supabase, SUPABASE_ENABLED } from './supabase'
-import type { ClothingItem, ClothingCategory } from '../types'
+import type { ClothingItem, OutfitSuggestion, StyleImage } from '../types'
 import type { AppConfig } from './storage'
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+export interface UserData {
+  wardrobe?: ClothingItem[]
+  outfits?: OutfitSuggestion[]
+  styles?: StyleImage[]
+  profilePhotos?: string[]
+}
 
-async function base64ToBlob(dataUrl: string): Promise<Blob> {
+const TABLES = {
+  wardrobe: 'wardrobe_items',
+  outfits: 'outfits',
+  styles: 'styles',
+  settings: 'user_settings',
+} as const
+
+const LEGACY_TABLES = {
+  outfits: 'outfit_suggestions',
+  styles: 'style_images',
+  settings: 'user_config',
+} as const
+
+const BUCKETS = {
+  wardrobe: 'wardrobe',
+  styles: 'styles',
+  profile: 'profile',
+} as const
+
+function requireSupabase() {
+  if (!SUPABASE_ENABLED || !supabase) throw new Error('Supabase is not configured.')
+  return supabase
+}
+
+async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  if (!dataUrl.startsWith('data:') && !dataUrl.startsWith('blob:')) throw new Error('Expected a data URL image.')
   const res = await fetch(dataUrl)
   return res.blob()
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms)
-  })
-  try { return await Promise.race([promise, timeout]) }
-  finally { if (timer) clearTimeout(timer) }
+async function uploadImage(bucket: string, path: string, dataUrl: string): Promise<string> {
+  if (!dataUrl.startsWith('data:') && !dataUrl.startsWith('blob:')) return dataUrl
+  const client = requireSupabase()
+  const blob = await dataUrlToBlob(dataUrl)
+  const { error } = await client.storage
+    .from(bucket)
+    .upload(path, blob, {
+      upsert: true,
+      contentType: blob.type || 'image/jpeg',
+      cacheControl: '31536000',
+    })
+  if (error) throw new Error(`Supabase Storage upload failed (${bucket}): ${error.message}`)
+  return client.storage.from(bucket).getPublicUrl(path).data.publicUrl
 }
 
-// ── Row mappers ───────────────────────────────────────────────────────────────
+export async function uploadClothingImage(userId: string, itemId: string, base64: string): Promise<string> {
+  return uploadImage(BUCKETS.wardrobe, `${userId}/${itemId}.jpg`, base64)
+}
 
-type DbRow = Record<string, unknown>
+export async function uploadStyleImage(userId: string, imageId: string, base64: string): Promise<string> {
+  return uploadImage(BUCKETS.styles, `${userId}/${imageId}.jpg`, base64)
+}
 
-function toDbItem(userId: string, item: ClothingItem): DbRow {
+export async function uploadProfilePhoto(userId: string, base64: string, photoId: string = crypto.randomUUID()): Promise<string> {
+  const url = await uploadImage(BUCKETS.profile, `${userId}/${photoId}.jpg`, base64)
+  return url.startsWith('data:') ? url : `${url}?t=${Date.now()}`
+}
+
+export async function saveProfilePhotosCloud(userId: string, photos: string[]): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  const urls = photos.filter(Boolean).slice(0, 5)
+  const { error } = await supabase.from(TABLES.settings).upsert({
+    user_id: userId,
+    profile_photos: urls,
+  })
+  if (error) throw new Error(error.message)
+}
+
+function itemToRow(item: ClothingItem, userId: string) {
   return {
     id: item.id,
     user_id: userId,
     name: item.name,
     category: item.category,
-    color: item.color,
+    color: item.color || '',
     image: item.image,
     tags: item.tags,
-    uploaded_at: item.uploadedAt,
     wear_count: item.wearCount ?? 0,
     last_worn: item.lastWorn ?? null,
+    uploaded_at: item.uploadedAt,
   }
 }
 
-function fromDbItem(row: DbRow): ClothingItem {
+function rowToItem(row: Record<string, unknown>): ClothingItem {
   return {
-    id: row.id as string,
-    name: row.name as string,
-    category: row.category as ClothingCategory,
-    color: (row.color as string) ?? '',
-    image: (row.image as string) ?? '',
-    tags: (row.tags as string[]) ?? [],
-    uploadedAt: (row.uploaded_at as string) ?? new Date().toISOString(),
-    wearCount: (row.wear_count as number) ?? 0,
-    lastWorn: row.last_worn as string | undefined,
+    id: String(row.id),
+    name: String(row.name ?? ''),
+    category: row.category as ClothingItem['category'],
+    color: String(row.color ?? ''),
+    image: String(row.image ?? ''),
+    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    uploadedAt: String(row.uploaded_at ?? new Date().toISOString()),
+    wearCount: Number(row.wear_count ?? 0),
+    lastWorn: row.last_worn ? String(row.last_worn) : undefined,
   }
 }
 
-function toDbOutfit(userId: string, outfit: import('../types').OutfitSuggestion): DbRow {
+function outfitToRow(outfit: OutfitSuggestion, userId: string) {
   return {
     id: outfit.id,
     user_id: userId,
@@ -64,172 +115,26 @@ function toDbOutfit(userId: string, outfit: import('../types').OutfitSuggestion)
     description: outfit.description,
     style_notes: outfit.styleNotes,
     occasion: outfit.occasion,
-    generated_at: outfit.generatedAt,
     preview_image: outfit.previewImage ?? null,
+    generated_at: outfit.generatedAt,
   }
 }
 
-function fromDbOutfit(row: DbRow): import('../types').OutfitSuggestion {
+function rowToOutfit(row: Record<string, unknown>): OutfitSuggestion {
   return {
-    id: row.id as string,
-    date: row.date as string,
-    itemIds: (row.item_ids as string[]) ?? [],
-    description: (row.description as string) ?? '',
-    styleNotes: (row.style_notes as string) ?? '',
-    occasion: (row.occasion as string) ?? 'Casual',
-    generatedAt: (row.generated_at as string) ?? new Date().toISOString(),
-    previewImage: row.preview_image as string | undefined,
+    id: String(row.id),
+    date: String(row.date),
+    itemIds: Array.isArray(row.item_ids) ? row.item_ids.map(String) : [],
+    description: String(row.description ?? ''),
+    styleNotes: String(row.style_notes ?? ''),
+    occasion: String(row.occasion ?? 'Casual'),
+    generatedAt: String(row.generated_at ?? new Date().toISOString()),
+    previewImage: row.preview_image ? String(row.preview_image) : undefined,
   }
 }
 
-function toDbConfig(userId: string, config: AppConfig): DbRow {
+function styleToRow(style: StyleImage, userId: string) {
   return {
-    user_id: userId,
-    provider: config.provider,
-    api_key: config.apiKey,
-    ollama_url: config.ollamaUrl,
-    ollama_model: config.ollamaModel,
-  }
-}
-
-function fromDbConfig(row: DbRow): AppConfig {
-  return {
-    provider: (row.provider as AppConfig['provider']) ?? 'proxy',
-    apiKey: (row.api_key as string) ?? '',
-    ollamaUrl: (row.ollama_url as string) ?? 'http://localhost:11434',
-    ollamaModel: (row.ollama_model as string) ?? 'moondream',
-  }
-}
-
-// ── Image upload ──────────────────────────────────────────────────────────────
-
-/** Upload a clothing item image to Storage. Returns public URL (or original base64 on failure). */
-export async function uploadClothingImage(
-  userId: string,
-  itemId: string,
-  base64: string,
-): Promise<string> {
-  if (!SUPABASE_ENABLED || !supabase) return base64
-  const blob = await base64ToBlob(base64)
-  const path = `${userId}/${itemId}.jpg`
-  try {
-    const upload = supabase.storage.from('wardrobe').upload(path, blob, {
-      contentType: 'image/jpeg',
-      upsert: true,
-    })
-    await withTimeout(upload, 15000, 'Image upload')
-    const { data } = supabase.storage.from('wardrobe').getPublicUrl(path)
-    return data.publicUrl
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    throw new Error(`Supabase Storage failed: ${msg}`)
-  }
-}
-
-/** Upload profile photo. Returns public URL. */
-export async function uploadProfilePhoto(userId: string, base64: string): Promise<string> {
-  if (!SUPABASE_ENABLED || !supabase) return base64
-  const blob = await base64ToBlob(base64)
-  const path = `${userId}/profile.jpg`
-  try {
-    const upload = supabase.storage.from('profile').upload(path, blob, {
-      contentType: 'image/jpeg',
-      upsert: true,
-    })
-    await withTimeout(upload, 15000, 'Profile upload')
-    const { data } = supabase.storage.from('profile').getPublicUrl(path)
-    return data.publicUrl
-  } catch {
-    return base64
-  }
-}
-
-/** Get profile photo public URL from Storage. */
-export async function getProfilePhotoCloud(userId: string): Promise<string> {
-  if (!SUPABASE_ENABLED || !supabase) return ''
-  try {
-    const { data } = supabase.storage.from('profile').getPublicUrl(`${userId}/profile.jpg`)
-    // Verify the object exists with a lightweight HEAD request
-    const res = await fetch(data.publicUrl, { method: 'HEAD' })
-    return res.ok ? data.publicUrl : ''
-  } catch {
-    return ''
-  }
-}
-
-/** Upload generated style / try-on image to Storage. Returns public URL. */
-export async function uploadStylePreviewImage(
-  userId: string,
-  outfitId: string,
-  imageDataUrl: string,
-): Promise<string> {
-  if (!SUPABASE_ENABLED || !supabase) return imageDataUrl
-  if (!imageDataUrl.startsWith('data:')) return imageDataUrl
-  const blob = await base64ToBlob(imageDataUrl)
-  const path = `${userId}/${outfitId}.png`
-  try {
-    const upload = supabase.storage.from('styles').upload(path, blob, {
-      contentType: blob.type || 'image/png',
-      upsert: true,
-    })
-    await withTimeout(upload, 20000, 'Style image upload')
-    const { data } = supabase.storage.from('styles').getPublicUrl(path)
-    return data.publicUrl
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    throw new Error(`Style image upload failed: ${msg}`)
-  }
-}
-
-/** Upload a try-on result image to the styles Storage bucket. Returns public URL (or original on failure). */
-export async function uploadStyleImage(
-  userId: string,
-  styleId: string,
-  imageDataUrl: string,
-): Promise<string> {
-  if (!SUPABASE_ENABLED || !supabase) return imageDataUrl
-  if (!imageDataUrl.startsWith('data:')) return imageDataUrl
-  const blob = await base64ToBlob(imageDataUrl)
-  const path = `${userId}/${styleId}.png`
-  try {
-    const upload = supabase.storage.from('styles').upload(path, blob, {
-      contentType: 'image/png',
-      upsert: true,
-    })
-    await withTimeout(upload, 20000, 'Style image upload')
-    const { data } = supabase.storage.from('styles').getPublicUrl(path)
-    return data.publicUrl
-  } catch {
-    return imageDataUrl
-  }
-}
-
-/** Fetch try-on style images from the styles table. */
-export async function getStylesCloud(userId: string): Promise<import('../types').StyleImage[]> {
-  if (!SUPABASE_ENABLED || !supabase) return []
-  const { data } = await supabase
-    .from('styles')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(50)
-  return (data ?? []).map((row) => ({
-    id: row.id as string,
-    image: (row.image as string) ?? '',
-    itemIds: (row.item_ids as string[]) ?? [],
-    outfitId: row.outfit_id as string | undefined,
-    source: (row.source as string) ?? 'try-on',
-    createdAt: (row.created_at as string) ?? new Date().toISOString(),
-  }))
-}
-
-/** Save a try-on style result to the styles table. */
-export async function saveStyleCloud(
-  userId: string,
-  style: import('../types').StyleImage,
-): Promise<void> {
-  if (!SUPABASE_ENABLED || !supabase) return
-  await supabase.from('styles').upsert({
     id: style.id,
     user_id: userId,
     image: style.image,
@@ -237,156 +142,372 @@ export async function saveStyleCloud(
     outfit_id: style.outfitId ?? null,
     source: style.source,
     created_at: style.createdAt,
+  }
+}
+
+function storageStyleUrl(userId: string, styleId: string) {
+  if (!supabase || !userId || !styleId) return ''
+  return supabase.storage.from(BUCKETS.styles).getPublicUrl(`${userId}/${styleId}.jpg`).data.publicUrl
+}
+
+function isLikelyExpiredImageUrl(value: string) {
+  const lower = value.toLowerCase()
+  return (
+    lower.includes('oaidalleapiprod') ||
+    lower.includes('blob.core.windows.net') ||
+    lower.includes('filesystem.site') ||
+    lower.includes('openai.com') && lower.includes('expires')
+  )
+}
+
+function rowToStyle(row: Record<string, unknown>): StyleImage {
+  const rawSource = String(row.source ?? row.type ?? row.kind ?? 'daily-preview')
+  const source: StyleImage['source'] =
+    rawSource === 'outfit-builder' || rawSource === 'try-on' || rawSource === 'daily-preview' || rawSource === 'tryon'
+      ? (rawSource === 'tryon' ? 'try-on' : rawSource)
+      : 'daily-preview'
+  const id = String(row.id)
+  const userId = String(row.user_id ?? row.userId ?? '')
+  const rawImage = String(row.image ?? row.image_url ?? row.imageUrl ?? row.url ?? row.preview_image ?? row.previewImage ?? row.generated_image ?? row.generatedImage ?? row.imageBase64 ?? row.result ?? '')
+  const image = !rawImage || isLikelyExpiredImageUrl(rawImage) ? storageStyleUrl(userId, id) || rawImage : rawImage
+  const itemIds = row.item_ids ?? row.itemIds ?? row.items
+
+  return {
+    id,
+    image,
+    itemIds: Array.isArray(itemIds) ? itemIds.map((item) => typeof item === 'object' && item && 'id' in item ? String((item as { id: unknown }).id) : String(item)) : [],
+    outfitId: row.outfit_id || row.outfitId ? String(row.outfit_id ?? row.outfitId) : undefined,
+    source,
+    createdAt: String(row.created_at ?? row.createdAt ?? row.generated_at ?? row.generatedAt ?? row.date ?? new Date().toISOString()),
+  }
+}
+
+function mergeById<T extends { id: string }>(primary: T[], legacy: T[]): T[] {
+  const seen = new Set<string>()
+  return [...primary, ...legacy].filter((item) => {
+    if (seen.has(item.id)) return false
+    seen.add(item.id)
+    return true
   })
 }
 
-// ── Wardrobe ──────────────────────────────────────────────────────────────────
+function mergeOutfitsByDate(outfits: OutfitSuggestion[]): OutfitSuggestion[] {
+  const byDate = new Map<string, OutfitSuggestion>()
+  outfits.forEach((outfit) => {
+    const current = byDate.get(outfit.date)
+    if (!current || outfit.generatedAt > current.generatedAt) byDate.set(outfit.date, outfit)
+  })
+  return [...byDate.values()]
+}
 
-/** Save a wardrobe item to the DB, uploading any base64 image to Storage first.
- *  Returns the item with the final image URL (Supabase public URL or original). */
-export async function addItemCloud(userId: string, item: ClothingItem): Promise<ClothingItem> {
-  if (!SUPABASE_ENABLED || !supabase) return item
-  let savedItem = item
-  // If the image is still base64, upload it to the wardrobe Storage bucket first
-  if (item.image.startsWith('data:')) {
-    try {
-      const url = await uploadClothingImage(userId, item.id, item.image)
-      savedItem = { ...item, image: url }
-    } catch { /* keep base64 if Storage upload fails */ }
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function normalizeWardrobeForCloud(items: ClothingItem[]) {
+  const idMap: Record<string, string> = {}
+  const normalized = items.map((item) => {
+    if (isUuid(item.id)) return item
+    const id = crypto.randomUUID()
+    idMap[item.id] = id
+    return { ...item, id }
+  })
+  return { items: normalized, idMap }
+}
+
+function normalizeRecordIdsForCloud<T extends { id: string }>(items: T[]) {
+  const idMap: Record<string, string> = {}
+  const normalized = items.map((item) => {
+    if (isUuid(item.id)) return item
+    const id = crypto.randomUUID()
+    idMap[item.id] = id
+    return { ...item, id }
+  })
+  return { items: normalized, idMap }
+}
+
+export interface WardrobeImportResult {
+  count: number
+  items: ClothingItem[]
+  idMap: Record<string, string>
+}
+
+export interface CloudImportResult<T> {
+  count: number
+  items: T[]
+  idMap: Record<string, string>
+}
+
+async function fetchRows(table: string, userId: string, orderColumn: string, limit?: number) {
+  if (!supabase) return []
+  let query = supabase.from(table).select('*').eq('user_id', userId).order(orderColumn, { ascending: false })
+  if (limit) query = query.limit(limit)
+  const { data, error } = await query
+  if (error) {
+    // Missing legacy tables should not break the app.
+    const message = error.message.toLowerCase()
+    if (
+      message.includes('does not exist') ||
+      message.includes('could not find') ||
+      message.includes('schema cache') ||
+      error.code === '42P01' ||
+      error.code === 'PGRST204'
+    ) return []
+    throw new Error(error.message)
   }
-  await supabase.from('wardrobe_items').upsert(toDbItem(userId, savedItem))
-  return savedItem
+  return (data ?? []) as Record<string, unknown>[]
+}
+
+async function fetchSettingsRow(userId: string) {
+  if (!supabase) return null
+  const current = await supabase.from(TABLES.settings).select('*').eq('user_id', userId).maybeSingle()
+  if (!current.error && current.data) return current.data as Record<string, unknown>
+  if (current.error && !isSchemaCacheError(current.error)) throw new Error(current.error.message)
+  const legacy = await supabase.from(LEGACY_TABLES.settings).select('*').eq('user_id', userId).maybeSingle()
+  if (!legacy.error && legacy.data) return legacy.data as Record<string, unknown>
+  if (legacy.error && !isSchemaCacheError(legacy.error)) throw new Error(legacy.error.message)
+  return null
+}
+
+function isSchemaCacheError(error: { message?: string; code?: string } | null | undefined) {
+  const message = String(error?.message ?? '').toLowerCase()
+  return (
+    message.includes('does not exist') ||
+    message.includes('could not find') ||
+    message.includes('schema cache') ||
+    error?.code === '42P01' ||
+    error?.code === 'PGRST204'
+  )
+}
+
+async function recoverStylesFromServer(): Promise<StyleImage[]> {
+  if (!SUPABASE_ENABLED || !supabase) return []
+  const { data } = await supabase.auth.getSession()
+  const token = data.session?.access_token
+  if (!token) return []
+  try {
+    const res = await fetch('/api/recover-styles', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!res.ok) return []
+    const json = await res.json() as { styles?: StyleImage[] }
+    return (json.styles ?? []).filter((style) => style.image)
+  } catch {
+    return []
+  }
+}
+
+export async function addItemCloud(userId: string, item: ClothingItem): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  const { error } = await supabase.from(TABLES.wardrobe).upsert(itemToRow(item, userId))
+  if (error) throw new Error(error.message)
 }
 
 export async function removeItemCloud(userId: string, itemId: string): Promise<void> {
   if (!SUPABASE_ENABLED || !supabase) return
-  await supabase.from('wardrobe_items').delete().eq('id', itemId).eq('user_id', userId)
+  const { error } = await supabase.from(TABLES.wardrobe).delete().eq('id', itemId).eq('user_id', userId)
+  if (error) throw new Error(error.message)
 }
 
-export async function getWardrobeCloud(userId: string): Promise<ClothingItem[]> {
-  if (!SUPABASE_ENABLED || !supabase) return []
-  const { data } = await supabase.from('wardrobe_items').select('*').eq('user_id', userId)
-  return (data ?? []).map(fromDbItem)
+export async function importLocalWardrobeToCloud(userId: string, items: ClothingItem[]): Promise<WardrobeImportResult> {
+  if (!SUPABASE_ENABLED || !supabase || items.length === 0) return { count: 0, items: [], idMap: {} }
+  const normalized = normalizeWardrobeForCloud(items)
+  const { error } = await supabase.from(TABLES.wardrobe).upsert(normalized.items.map((item) => itemToRow(item, userId)))
+  if (error) throw new Error(error.message)
+  return { count: normalized.items.length, items: normalized.items, idMap: normalized.idMap }
 }
 
-// ── Outfits ───────────────────────────────────────────────────────────────────
+export async function importLocalOutfitsToCloud(userId: string, outfits: OutfitSuggestion[]): Promise<CloudImportResult<OutfitSuggestion>> {
+  if (!SUPABASE_ENABLED || !supabase || outfits.length === 0) return { count: 0, items: [], idMap: {} }
+  const idNormalized = normalizeRecordIdsForCloud(outfits)
+  const normalized = await Promise.all(idNormalized.items.map(async (outfit) => {
+    if (!outfit.previewImage || (!outfit.previewImage.startsWith('data:') && !outfit.previewImage.startsWith('blob:'))) return outfit
+    const imageUrl = await uploadStyleImage(userId, `outfit-${outfit.id}`, outfit.previewImage)
+    return { ...outfit, previewImage: imageUrl }
+  }))
+  const rows = normalized.map((outfit) => outfitToRow(outfit, userId))
+  const { error } = await supabase.from(TABLES.outfits).upsert(rows)
+  if (error) {
+    if (!isSchemaCacheError(error)) throw new Error(error.message)
+    const legacy = await supabase.from(LEGACY_TABLES.outfits).upsert(rows)
+    if (legacy.error) throw new Error(legacy.error.message)
+  }
+  return { count: normalized.length, items: normalized, idMap: idNormalized.idMap }
+}
 
-export async function saveOutfitCloud(
-  userId: string,
-  outfit: import('../types').OutfitSuggestion,
-): Promise<void> {
+export async function importLocalStylesToCloud(userId: string, styles: StyleImage[]): Promise<CloudImportResult<StyleImage>> {
+  if (!SUPABASE_ENABLED || !supabase || styles.length === 0) return { count: 0, items: [], idMap: {} }
+  const withImages = styles.filter((style) => style.image)
+  const idNormalized = normalizeRecordIdsForCloud(withImages)
+  const normalized = await Promise.all(idNormalized.items.map(async (style) => {
+    const image = style.image.startsWith('data:') || style.image.startsWith('blob:')
+      ? await uploadStyleImage(userId, style.id, style.image)
+      : style.image
+    return { ...style, image }
+  }))
+  if (normalized.length === 0) return { count: 0, items: [], idMap: {} }
+  const rows = normalized.map((style) => styleToRow(style, userId))
+  const { error } = await supabase.from(TABLES.styles).upsert(rows)
+  if (error) {
+    if (!isSchemaCacheError(error)) throw new Error(error.message)
+    const legacy = await supabase.from(LEGACY_TABLES.styles).upsert(rows)
+    if (legacy.error) throw new Error(legacy.error.message)
+  }
+  return { count: normalized.length, items: normalized, idMap: idNormalized.idMap }
+}
+
+export async function saveOutfitCloud(userId: string, outfit: OutfitSuggestion): Promise<void> {
   if (!SUPABASE_ENABLED || !supabase) return
-  await supabase.from('outfits').upsert(toDbOutfit(userId, outfit))
+  const row = outfitToRow(outfit, userId)
+  const { error } = await supabase.from(TABLES.outfits).upsert(row)
+  if (error) {
+    if (!isSchemaCacheError(error)) throw new Error(error.message)
+    const legacy = await supabase.from(LEGACY_TABLES.outfits).upsert(row)
+    if (legacy.error) throw new Error(legacy.error.message)
+  }
 }
 
-export async function getOutfitsCloud(
-  userId: string,
-): Promise<import('../types').OutfitSuggestion[]> {
-  if (!SUPABASE_ENABLED || !supabase) return []
-  const { data } = await supabase
-    .from('outfits')
-    .select('*')
-    .eq('user_id', userId)
-    .order('date', { ascending: false })
-    .limit(90)
-  return (data ?? []).map(fromDbOutfit)
+export async function saveStyleCloud(userId: string, style: StyleImage): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  const cloudStyle = style.image.startsWith('data:') || style.image.startsWith('blob:')
+    ? { ...style, image: await uploadStyleImage(userId, style.id, style.image) }
+    : style
+  const row = styleToRow(cloudStyle, userId)
+  const { error } = await supabase.from(TABLES.styles).upsert(row)
+  if (error) {
+    if (!isSchemaCacheError(error)) throw new Error(error.message)
+    const legacy = await supabase.from(LEGACY_TABLES.styles).upsert(row)
+    if (legacy.error) throw new Error(legacy.error.message)
+  }
 }
 
-// ── Config ────────────────────────────────────────────────────────────────────
+export async function removeStyleCloud(userId: string, styleId: string): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  const [current, legacy] = await Promise.all([
+    supabase.from(TABLES.styles).delete().eq('id', styleId).eq('user_id', userId),
+    supabase.from(LEGACY_TABLES.styles).delete().eq('id', styleId).eq('user_id', userId),
+  ])
+  const realErrors = [current.error, legacy.error].filter((error) => {
+    if (!error) return false
+    return !isSchemaCacheError(error)
+  })
+  if (realErrors[0]) throw new Error(realErrors[0].message)
+}
+
+export async function clearOutfitPreviewCloud(userId: string, outfitId: string): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  const [current, legacy] = await Promise.all([
+    supabase.from(TABLES.outfits).update({ preview_image: null }).eq('id', outfitId).eq('user_id', userId),
+    supabase.from(LEGACY_TABLES.outfits).update({ preview_image: null }).eq('id', outfitId).eq('user_id', userId),
+  ])
+  const realErrors = [current.error, legacy.error].filter((error) => {
+    if (!error) return false
+    return !isSchemaCacheError(error)
+  })
+  if (realErrors[0]) throw new Error(realErrors[0].message)
+}
 
 export async function saveConfigCloud(userId: string, config: AppConfig): Promise<void> {
   if (!SUPABASE_ENABLED || !supabase) return
-  await supabase.from('user_settings').upsert(toDbConfig(userId, config))
+  const { error } = await supabase.from(TABLES.settings).upsert({
+    user_id: userId,
+    provider: config.provider,
+    api_key: config.apiKey,
+    ollama_url: config.ollamaUrl,
+    ollama_model: config.ollamaModel,
+  })
+  if (error) throw new Error(error.message)
 }
 
 export async function getConfigCloud(userId: string): Promise<AppConfig | null> {
   if (!SUPABASE_ENABLED || !supabase) return null
-  const { data } = await supabase
-    .from('user_settings')
-    .select('*')
-    .eq('user_id', userId)
-    .single()
-  return data ? fromDbConfig(data as DbRow) : null
+  const fetchConfig = async (table: string) => {
+    const { data, error } = await supabase!
+      .from(table)
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (error) {
+      if (error.message.toLowerCase().includes('does not exist') || error.code === '42P01') return null
+      throw new Error(error.message)
+    }
+    return data
+  }
+  const data = await fetchConfig(TABLES.settings) ?? await fetchConfig(LEGACY_TABLES.settings)
+  if (!data) return null
+  return {
+    provider: data.provider,
+    apiKey: data.api_key,
+    ollamaUrl: data.ollama_url,
+    ollamaModel: data.ollama_model,
+  }
 }
 
-// ── Full sync (cloud → local) ─────────────────────────────────────────────────
-
-export interface CloudSnapshot {
-  wardrobe: ClothingItem[]
-  outfits: import('../types').OutfitSuggestion[]
-  config: AppConfig | null
-  profilePhoto: string
-}
-
-export async function syncFromCloud(userId: string): Promise<CloudSnapshot> {
-  const [wardrobe, outfits, config, profilePhoto] = await Promise.all([
-    getWardrobeCloud(userId),
-    getOutfitsCloud(userId),
-    getConfigCloud(userId),
-    getProfilePhotoCloud(userId),
-  ])
-  return { wardrobe, outfits, config, profilePhoto }
-}
-
-// ── Live sync (same account across PC / iPad) ─────────────────────────────────
-
-export function subscribeToCloud(
+export function subscribeToUserData(
   userId: string,
-  onData: (snapshot: CloudSnapshot) => void,
+  onData: (data: UserData) => void,
+  onError: (err: Error) => void,
 ): () => void {
-  if (!SUPABASE_ENABLED || !supabase) return () => {}
-  const sb = supabase
-
-  let wardrobe: ClothingItem[] = []
-  let outfits: import('../types').OutfitSuggestion[] = []
-  let config: AppConfig | null = null
-  let profilePhoto = ''
-  let wardrobeLoaded = false
-  let outfitsLoaded = false
-
-  const emit = () => {
-    if (!wardrobeLoaded || !outfitsLoaded) return
-    onData({ wardrobe, outfits, config, profilePhoto })
+  if (!SUPABASE_ENABLED || !supabase) {
+    onError(new Error('Supabase not configured'))
+    return () => {}
   }
 
-  const channel = sb
-    .channel(`user-${userId}`)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'wardrobe_items', filter: `user_id=eq.${userId}` },
-      async () => {
-        wardrobe = await getWardrobeCloud(userId)
-        wardrobeLoaded = true
-        emit()
-      },
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'outfits', filter: `user_id=eq.${userId}` },
-      async () => {
-        outfits = await getOutfitsCloud(userId)
-        outfitsLoaded = true
-        emit()
-      },
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'user_settings', filter: `user_id=eq.${userId}` },
-      async () => {
-        config = await getConfigCloud(userId)
-        emit()
-      },
-    )
-    .subscribe(async () => {
-      // Initial load once channel is ready
-      wardrobe = await getWardrobeCloud(userId)
-      wardrobeLoaded = true
-      outfits = await getOutfitsCloud(userId)
-      outfitsLoaded = true
-      config = await getConfigCloud(userId)
-      profilePhoto = await getProfilePhotoCloud(userId)
-      emit()
+  let disposed = false
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+
+  async function fetchAll() {
+    try {
+      const [wardrobeRows, outfitRows, legacyOutfitRows, styleRows, legacyStyleRows, recoveredStyles, settingsRow] = await Promise.all([
+        fetchRows(TABLES.wardrobe, userId, 'uploaded_at'),
+        fetchRows(TABLES.outfits, userId, 'date', 90),
+        fetchRows(LEGACY_TABLES.outfits, userId, 'date', 90),
+        fetchRows(TABLES.styles, userId, 'created_at', 1000),
+        fetchRows(LEGACY_TABLES.styles, userId, 'created_at', 1000),
+        recoverStylesFromServer(),
+        fetchSettingsRow(userId),
+      ])
+      const outfits = mergeOutfitsByDate(mergeById(outfitRows.map(rowToOutfit), legacyOutfitRows.map(rowToOutfit)))
+        .sort((a, b) => b.date.localeCompare(a.date) || b.generatedAt.localeCompare(a.generatedAt))
+        .slice(0, 90)
+      const styles = mergeById(mergeById(styleRows.map(rowToStyle), legacyStyleRows.map(rowToStyle)), recoveredStyles)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 1000)
+      if (disposed) return
+      onData({
+        wardrobe: wardrobeRows.map(rowToItem),
+        outfits,
+        styles,
+        profilePhotos: Array.isArray(settingsRow?.profile_photos) ? settingsRow.profile_photos.map(String).filter(Boolean) : [],
+      })
+    } catch (error) {
+      if (!disposed) onError(error instanceof Error ? error : new Error(String(error)))
+    }
+  }
+
+  const scheduleFetchAll = () => {
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(fetchAll, 150)
+  }
+
+  fetchAll()
+
+  const channel = supabase
+    .channel(`user-data-${userId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.wardrobe, filter: `user_id=eq.${userId}` }, scheduleFetchAll)
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.outfits, filter: `user_id=eq.${userId}` }, scheduleFetchAll)
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLES.styles, filter: `user_id=eq.${userId}` }, scheduleFetchAll)
+    .on('postgres_changes', { event: '*', schema: 'public', table: LEGACY_TABLES.outfits, filter: `user_id=eq.${userId}` }, scheduleFetchAll)
+    .on('postgres_changes', { event: '*', schema: 'public', table: LEGACY_TABLES.styles, filter: `user_id=eq.${userId}` }, scheduleFetchAll)
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        onError(new Error(`Supabase realtime ${status.toLowerCase().replace('_', ' ')}`))
+      }
     })
 
-  return () => { sb.removeChannel(channel) }
+  return () => {
+    disposed = true
+    if (refreshTimer) clearTimeout(refreshTimer)
+    supabase!.removeChannel(channel)
+  }
 }

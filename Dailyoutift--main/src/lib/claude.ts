@@ -1,7 +1,24 @@
-import OpenAI from 'openai'
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai'
+// Lazy-load the heavy AI SDKs only when actually needed.
+// For users on the Built-in AI (proxy) provider — by far the common case —
+// neither SDK is ever loaded into the browser. Saves ~330 KB of JS.
+import type OpenAIType from 'openai'
+import type { GoogleGenerativeAI as GoogleGenerativeAIType } from '@google/generative-ai'
 import type { AppConfig } from './storage'
 import type { ClothingItem, OutfitSuggestion } from '../types'
+import { authFetch } from './authFetch'
+import { formatDateKey } from './dates'
+
+let _OpenAI: typeof OpenAIType | null = null
+async function getOpenAIClass(): Promise<typeof OpenAIType> {
+  if (!_OpenAI) _OpenAI = (await import('openai')).default
+  return _OpenAI
+}
+
+let _GoogleGenAI: typeof GoogleGenerativeAIType | null = null
+async function getGoogleGenAIClass(): Promise<typeof GoogleGenerativeAIType> {
+  if (!_GoogleGenAI) _GoogleGenAI = (await import('@google/generative-ai')).GoogleGenerativeAI
+  return _GoogleGenAI
+}
 
 // Gemini model preference order — tries each until one works
 const GEMINI_TEXT_MODELS = [
@@ -9,22 +26,6 @@ const GEMINI_TEXT_MODELS = [
   'gemini-1.5-flash',
   'gemini-1.5-flash-8b',
 ]
-
-// Permissive safety settings — fashion app, no harmful content.
-const FASHION_SAFETY = [
-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-]
-
-// Gemini flags certain occasion names at the prompt level (400 rejection).
-const SAFE_OCCASION: Record<string, string> = {
-  'Date Night':  'Evening Dining',
-  'Party':       'Social Gathering',
-  'Beach':       'Outdoor Day',
-  'Sports':      'Active Day',
-}
 
 function resolveUrl(url: string): string {
   if (url.startsWith('/')) return `${window.location.origin}${url}`
@@ -58,8 +59,9 @@ export function parseGeminiError(e: unknown): string {
 
 /** Get a Gemini model, trying fallbacks if the primary is unavailable */
 async function getGeminiModel(apiKey: string, models = GEMINI_TEXT_MODELS) {
+  const GoogleGenerativeAI = await getGoogleGenAIClass()
   const genAI = new GoogleGenerativeAI(apiKey)
-  return genAI.getGenerativeModel({ model: models[0], safetySettings: FASHION_SAFETY })
+  return genAI.getGenerativeModel({ model: models[0] })
 }
 
 function extractFirstJSON(text: string): string {
@@ -76,6 +78,15 @@ function extractFirstJSON(text: string): string {
     if (ch === '}') { depth--; if (depth === 0) return text.slice(start, i + 1) }
   }
   throw new Error('Incomplete JSON in response')
+}
+
+function normalizeClothingData(data: Record<string, unknown>): { name: string; category: string; color: string; tags: string[] } {
+  return {
+    name: typeof data.name === 'string' && data.name ? data.name : 'Unknown Item',
+    category: typeof data.category === 'string' && data.category ? data.category : 'top',
+    color: typeof data.color === 'string' ? data.color : '',
+    tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
+  }
 }
 
 function parseJSON(text: string): Record<string, unknown> {
@@ -116,7 +127,8 @@ export async function testGeminiKey(apiKey: string): Promise<{ ok: boolean; erro
 
 // --- OpenAI / Ollama ---
 
-function getOpenAIClient(config: AppConfig): { client: OpenAI; model: string } {
+async function getOpenAIClient(config: AppConfig): Promise<{ client: OpenAIType; model: string }> {
+  const OpenAI = await getOpenAIClass()
   if (config.provider === 'ollama') {
     return {
       client: new OpenAI({ apiKey: 'ollama', baseURL: `${resolveUrl(config.ollamaUrl)}/v1`, dangerouslyAllowBrowser: true }),
@@ -142,6 +154,7 @@ async function ollamaChat(ollamaBaseUrl: string, model: string, prompt: string, 
 
 async function ollamaAnalyzeClothing(imageBase64: string, config: AppConfig) {
   const baseURL = `${resolveUrl(config.ollamaUrl)}/v1`
+  const OpenAI = await getOpenAIClass()
   const visionClient = new OpenAI({ apiKey: 'ollama', baseURL, dangerouslyAllowBrowser: true })
   const desc = await visionClient.chat.completions.create({
     model: config.ollamaModel,
@@ -166,55 +179,78 @@ async function ollamaAnalyzeClothing(imageBase64: string, config: AppConfig) {
 
 // --- Proxy (server-side Gemini key) ---
 
-/** Returns true only if the /api/ai proxy endpoint is live AND has GEMINI_API_KEY configured. */
+async function readProxyJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text) as Record<string, unknown>
+  } catch {
+    throw new Error(`AI proxy returned a non-JSON response (${res.status}). Check the Vercel function logs.`)
+  }
+}
+
+function proxyErrorMessage(data: Record<string, unknown>, status: number): string {
+  const code = typeof data.error === 'string' ? data.error : ''
+  const details = typeof data.details === 'string' ? data.details : ''
+  if (code === 'not_configured') return 'AI is not configured. Add OPENAI_API_KEY or GEMINI_API_KEY in Vercel Environment Variables.'
+  if (code === 'quota_exceeded') return 'Quota exceeded - the built-in AI quota is full, please try again tomorrow.'
+  if (code === 'free_limit_reached') return details || 'Free monthly AI limit reached. Upgrade to Pro to continue.'
+  if (code === 'missing_token' || code === 'invalid_token') return 'Please sign in again before using AI.'
+  if (details) return details
+  if (code) return code
+  return `AI proxy error ${status}`
+}
+
+function outfitPrompt(day: string, date: string, occasion: string | undefined, weatherHint: string | undefined, wardrobeList: string) {
+  const occasionText = occasion || 'Casual'
+  const weatherLine = weatherHint ? `\n${weatherHint}` : ''
+  return `You are a practical personal stylist. Pick 2-4 items for ${day}, ${date} for a ${occasionText} occasion.${weatherLine}
+
+Rules:
+- Build a complete outfit with one top plus one bottom, or one dress.
+- Add shoes or accessories only when they fit the occasion and do not repeat a near-identical look.
+- Prefer items with lower weekly use; the app has already removed over-used pieces from the list.
+- Do not invent item IDs. Return only IDs from the wardrobe list.
+- Avoid repeating the exact same full outfit or color/category combination when alternatives exist.
+
+Wardrobe:
+${wardrobeList}
+
+Respond ONLY with valid JSON:
+{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling tips","occasion":"${occasionText}"}`
+}
+
+/** Returns true if the /api/ai proxy endpoint is live and configured. */
 export async function checkProxy(): Promise<boolean> {
   try {
-    const res = await fetch('/api/ai', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'health' }),
-    })
-    const data = await res.json().catch(() => null)
-    return Boolean(res.ok && data?.configured)
+    const res = await fetch('/api/ai', { method: 'GET' })
+    return res.ok
   } catch {
     return false
   }
 }
 
-async function fetchAI(body: Record<string, unknown>, timeoutMs = 25000) {
-  const controller = new AbortController()
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
-  try {
-    const res = await fetch('/api/ai', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) {
-      if (res.status === 503 || data.error === 'not_configured') throw new Error('Built-in AI is not configured. Add GEMINI_API_KEY in Vercel, then redeploy.')
-      if (res.status === 429 || data.error === 'quota_exceeded') throw new Error('Quota exceeded — the built-in AI quota is full, please try again tomorrow')
-      throw new Error(data.message ?? data.error ?? `AI error ${res.status}`)
-    }
-    return data
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') throw new Error('AI request timed out — try a smaller/clearer photo')
-    throw e
-  } finally {
-    window.clearTimeout(timer)
-  }
-}
-
 async function proxyAnalyzeClothing(imageBase64: string) {
-  return await fetchAI({ action: 'analyze', imageBase64 }) as { name: string; category: string; color: string; tags: string[] }
+  const res = await authFetch('/api/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'analyze', imageBase64 }),
+  })
+  const data = await readProxyJson(res)
+  if (!res.ok) throw new Error(proxyErrorMessage(data, res.status))
+  return data as { name: string; category: string; color: string; tags: string[] }
 }
 
 async function proxyGenerateOutfit(wardrobe: ClothingItem[], date: string, occasion?: string, weatherHint?: string) {
-  // Strip images before sending — the API only uses id/name/category/color.
-  // Sending full base64 images can exceed Vercel's 4.5 MB body limit and cause silent failures.
-  const wardrobeSafe = wardrobe.map(({ id, name, category, color, tags }) => ({ id, name, category, color, tags }))
-  const data = await fetchAI({ action: 'outfit', wardrobe: wardrobeSafe, date, occasion, weatherHint })
+  const res = await authFetch('/api/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'outfit', wardrobe, date, occasion, weatherHint }),
+  })
+  const data = await readProxyJson(res)
+  if (!res.ok) {
+    throw new Error(proxyErrorMessage(data, res.status))
+  }
   return data as Omit<OutfitSuggestion, 'id' | 'generatedAt'>
 }
 
@@ -227,26 +263,42 @@ export async function analyzeClothing(
   if (config.provider === 'proxy') return proxyAnalyzeClothing(imageBase64)
   if (config.provider === 'gemini') {
     try {
-      return await geminiAnalyzeClothing(imageBase64, config.apiKey) as { name: string; category: string; color: string; tags: string[] }
+      return normalizeClothingData(await geminiAnalyzeClothing(imageBase64, config.apiKey))
     } catch (e) {
+      // fallback to proxy
+      try { return await proxyAnalyzeClothing(imageBase64) } catch { /* ignore */ }
       throw new Error(parseGeminiError(e))
     }
   }
-  if (config.provider === 'ollama') return ollamaAnalyzeClothing(imageBase64, config) as Promise<{ name: string; category: string; color: string; tags: string[] }>
+  if (config.provider === 'ollama') return normalizeClothingData(await ollamaAnalyzeClothing(imageBase64, config))
 
-  const { client, model } = getOpenAIClient(config)
-  const response = await client.chat.completions.create({
-    model,
-    max_tokens: 300,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'image_url', image_url: { url: imageBase64 } },
-        { type: 'text', text: `Analyze this clothing item. Respond ONLY with valid JSON:\n{"name":"short name","category":"top|bottom|dress|shoes|accessory|outerwear","color":"main color","tags":["tag1","tag2","tag3"]}` },
-      ],
-    }],
-  })
-  return parseJSON(response.choices[0].message.content ?? '') as { name: string; category: string; color: string; tags: string[] }
+  // OpenAI direct — try gpt-4o-mini then gpt-4o, then fall back to proxy
+  const { client } = await getOpenAIClient(config)
+  const analyzePrompt = 'Analyze this clothing item. Respond ONLY with valid JSON:\n{"name":"short name","category":"top|bottom|dress|shoes|accessory|outerwear","color":"main color","tags":["tag1","tag2","tag3"]}'
+  let lastErr: unknown
+  for (const model of ['gpt-4o-mini', 'gpt-4o']) {
+    try {
+      const response = await client.chat.completions.create({
+        model,
+        max_tokens: 300,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: imageBase64 } },
+            { type: 'text', text: analyzePrompt },
+          ],
+        }],
+      })
+      return normalizeClothingData(parseJSON(response.choices[0].message.content ?? ''))
+    } catch (err) {
+      lastErr = err
+      const m = err instanceof Error ? err.message : String(err)
+      if (!m.includes('model') && !m.includes('not found') && !m.includes('access')) break
+    }
+  }
+  // Last resort: server-side proxy
+  try { return await proxyAnalyzeClothing(imageBase64) } catch { /* ignore */ }
+  throw lastErr ?? new Error('Could not analyze with OpenAI')
 }
 
 export async function generateOutfit(
@@ -258,12 +310,9 @@ export async function generateOutfit(
 ): Promise<Omit<OutfitSuggestion, 'id' | 'generatedAt'>> {
   if (config.provider === 'proxy') return proxyGenerateOutfit(wardrobe, date, occasion, weatherHint)
 
-  const day = new Date(date).toLocaleDateString('en-US', { weekday: 'long' })
-  const safeOcc = occasion ? (SAFE_OCCASION[occasion] ?? occasion) : null
-  const occasionHint = safeOcc ? ` suitable for a ${safeOcc} setting` : ''
-  const weatherLine = weatherHint ? `\nWeather context: ${weatherHint}` : ''
+  const day = formatDateKey(date, { weekday: 'long' })
   const wardrobeList = wardrobe.map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
-  const prompt = `You are a professional wardrobe stylist. Choose 2-4 clothing items from the list below that work well together as a complete outfit for ${day}${occasionHint}.${weatherLine}\n\nClothing items available:\n${wardrobeList}\n\nReply with ONLY this JSON:\n{"itemIds":["id1","id2"],"description":"outfit description","styleNotes":"styling advice","occasion":"${occasion ?? 'Casual'}"}`
+  const prompt = outfitPrompt(day, date, occasion, weatherHint, wardrobeList)
 
   if (config.provider === 'gemini') {
     try {
@@ -283,7 +332,7 @@ export async function generateOutfit(
     return { ...parseJSON(raw), date } as Omit<OutfitSuggestion, 'id' | 'generatedAt'>
   }
 
-  const { client } = getOpenAIClient(config)
+  const { client } = await getOpenAIClient(config)
   const response = await client.chat.completions.create({
     model: 'gpt-4o',
     max_tokens: 600,

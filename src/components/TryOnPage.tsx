@@ -4,10 +4,12 @@ import {
   Camera, Plus, RefreshCw, CheckCircle, Info,
 } from 'lucide-react'
 import type { AppConfig } from '../lib/storage'
-import { getProfilePhotos, saveProfilePhotos } from '../lib/storage'
-import { saveStyleCloud, uploadStyleImage, uploadProfilePhoto } from '../lib/cloud'
+import { getProfilePhotos, getStyles, saveProfilePhotos, saveStyles } from '../lib/storage'
+import { saveProfilePhotosCloud, saveStyleCloud, uploadStyleImage, uploadProfilePhoto } from '../lib/cloud'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
 import { generationQueue, useGenerationJob } from '../lib/generationQueue'
+import type { StyleImage } from '../types'
+import { authFetch } from '../lib/authFetch'
 
 interface Props {
   config: AppConfig
@@ -17,25 +19,14 @@ interface Props {
 
 const MAX_ITEMS = 5
 
-function compressImage(dataUrl: string, maxPx = 1024, quality = 0.8): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image()
-    img.onload = () => {
-      let { width, height } = img
-      if (width > maxPx || height > maxPx) {
-        if (width > height) { height = Math.round((height * maxPx) / width); width = maxPx }
-        else { width = Math.round((width * maxPx) / height); height = maxPx }
-      }
-      const canvas = document.createElement('canvas')
-      canvas.width = width; canvas.height = height
-      const ctx = canvas.getContext('2d')
-      if (!ctx) { resolve(dataUrl); return }
-      ctx.drawImage(img, 0, 0, width, height)
-      resolve(canvas.toDataURL('image/jpeg', quality))
-    }
-    img.onerror = () => resolve(dataUrl)
-    img.src = dataUrl
-  })
+async function readApiJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text()
+  if (!text) return {}
+  try {
+    return JSON.parse(text) as Record<string, unknown>
+  } catch {
+    throw new Error(`AI server returned ${res.status} with an unreadable response.`)
+  }
 }
 
 const EXAMPLES = [
@@ -64,11 +55,42 @@ export default function TryOnPage({ userId, onSaved }: Props) {
   const itemRef = useRef<HTMLInputElement>(null)
   const bodyRef = useRef<HTMLInputElement>(null)
 
+  async function saveTryOnStyle(image: string): Promise<StyleImage> {
+    const style: StyleImage = {
+      id: crypto.randomUUID(),
+      image,
+      itemIds: [],
+      source: 'try-on',
+      createdAt: new Date().toISOString(),
+    }
+
+    // Keep a recovery copy first so Pictures never loses a finished try-on
+    // because of a temporary Supabase table, storage, or network issue.
+    saveStyles([style, ...getStyles()])
+    onSaved?.()
+
+    if (!userId) return style
+
+    try {
+      const imageUrl = await uploadStyleImage(userId, style.id, image)
+      const cloudStyle = { ...style, image: imageUrl }
+      await saveStyleCloud(userId, cloudStyle)
+      saveStyles([cloudStyle, ...getStyles().filter((item) => item.id !== style.id)])
+      onSaved?.()
+      return cloudStyle
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('Try-on cloud save failed; kept local recovery copy:', message)
+      return style
+    }
+  }
+
   // When the queue's job for this page finishes, pull the result into local state
   useEffect(() => {
     if (isMyJob && job?.status === 'done' && job.result) {
       setResult(job.result.imageBase64)
       setDescription(job.result.description ?? '')
+      setSaved(true)
     } else if (isMyJob && job?.status === 'error') {
       setError(job.error?.substring(0, 140) ?? 'Generation failed')
     }
@@ -77,8 +99,12 @@ export default function TryOnPage({ userId, onSaved }: Props) {
   // Refresh profile photos when window regains focus (in case user added on another page)
   useEffect(() => {
     const onFocus = () => setProfilePhotos(getProfilePhotos())
+    window.addEventListener('daily-stylist-profile-photos', onFocus)
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('daily-stylist-profile-photos', onFocus)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   async function handleItemFile(file: File) {
@@ -86,18 +112,15 @@ export default function TryOnPage({ userId, onSaved }: Props) {
       setError(`You can add up to ${MAX_ITEMS} items at once`)
       return
     }
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      const raw = e.target?.result
-      if (typeof raw !== 'string') return
-      const compressed = await compressImage(raw)
-      setItemImages((prev) => [...prev, compressed])
+    try {
+      const { dataUrl } = await convertImageFileToJpegDataUrl(file, 1200, 0.75)
+      setItemImages((prev) => [...prev, dataUrl])
       setResult(null)
       setSaved(false)
       setError('')
+    } catch (e) {
+      setError('Could not load item photo: ' + (e instanceof Error ? e.message : String(e)).substring(0, 120))
     }
-    reader.onerror = () => setError('Could not read image file')
-    reader.readAsDataURL(file)
   }
 
   function removeItem(index: number) {
@@ -108,19 +131,21 @@ export default function TryOnPage({ userId, onSaved }: Props) {
 
   async function handleBodyFile(file: File) {
     try {
-      const { dataUrl } = await convertImageFileToJpegDataUrl(file, 1200, 0.8)
-      const compressed = await compressImage(dataUrl, 1024, 0.85)
-      setBodyImage(compressed)
+      const { dataUrl } = await convertImageFileToJpegDataUrl(file, 1200, 0.75)
+      setBodyImage(dataUrl)
       setError('')
 
       // Save as profile photo if signed in
       if (userId) {
-        const photos = getProfilePhotos()
-        photos.push(compressed)
+        const photos = [...getProfilePhotos(), dataUrl].slice(0, 5)
         saveProfilePhotos(photos)
         setProfilePhotos(getProfilePhotos())
         try {
-          await uploadProfilePhoto(userId, compressed)
+          const url = await uploadProfilePhoto(userId, dataUrl)
+          const cloudPhotos = [...getProfilePhotos().filter((photo) => photo !== dataUrl), url].slice(0, 5)
+          saveProfilePhotos(cloudPhotos)
+          setProfilePhotos(cloudPhotos)
+          await saveProfilePhotosCloud(userId, cloudPhotos)
         } catch { /* ignore */ }
       }
     } catch (e) {
@@ -139,41 +164,28 @@ export default function TryOnPage({ userId, onSaved }: Props) {
 
     const items = [...itemImages]
     const body = effectiveBodyImage ?? undefined
-    const uid = userId
-
     generationQueue.start({
       kind: 'try-on',
       origin: 'tryon',
       label: `Trying on ${items.length} item${items.length !== 1 ? 's' : ''}`,
       runner: async () => {
-        const res = await fetch('/api/ai', {
+        const res = await authFetch('/api/ai', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'try-on', itemsBase64: items, bodyBase64: body }),
         })
-        const data = await res.json()
+        const data = await readApiJson(res)
         if (!res.ok) {
-          if (res.status === 429) throw new Error('AI quota exceeded — try again later')
-          throw new Error(data.error ?? `Server error ${res.status}`)
+          if (res.status === 429) throw new Error('AI quota exceeded - try again later')
+          const details = typeof data.details === 'string' ? data.details : ''
+          const error = typeof data.error === 'string' ? data.error : ''
+          throw new Error(details || error || `Server error ${res.status}`)
         }
-        const imageBase64: string = data.imageBase64
-        const desc: string = data.description ?? ''
+        const imageBase64 = data.imageBase64 as string
+        const desc = typeof data.description === 'string' ? data.description : ''
+        if (imageBase64) await saveTryOnStyle(imageBase64)
 
         // Auto-save to Styles & History — happens in the background
-        if (uid && imageBase64) {
-          try {
-            const styleId = crypto.randomUUID()
-            const imageUrl = await uploadStyleImage(uid, styleId, imageBase64)
-            await saveStyleCloud(uid, {
-              id: styleId,
-              image: imageUrl,
-              itemIds: [],
-              source: 'try-on',
-              createdAt: new Date().toISOString(),
-            })
-          } catch { /* user can manually save */ }
-        }
-
         return { imageBase64, description: desc }
       },
     })
@@ -188,19 +200,10 @@ export default function TryOnPage({ userId, onSaved }: Props) {
   }
 
   async function saveToStyles() {
-    if (!result || !userId || saved) return
+    if (!result || saved) return
     try {
-      const styleId = crypto.randomUUID()
-      const imageUrl = await uploadStyleImage(userId, styleId, result)
-      await saveStyleCloud(userId, {
-        id: styleId,
-        image: imageUrl,
-        itemIds: [],
-        source: 'try-on',
-        createdAt: new Date().toISOString(),
-      })
+      await saveTryOnStyle(result)
       setSaved(true)
-      onSaved?.()
     } catch (e) {
       setError('Could not save: ' + (e instanceof Error ? e.message : '').substring(0, 60))
     }
@@ -282,7 +285,7 @@ export default function TryOnPage({ userId, onSaved }: Props) {
             </p>
           )}
 
-          <input ref={itemRef} type="file" accept="image/*" className="hidden"
+          <input ref={itemRef} type="file" accept="image/*,.heic,.heif" className="hidden"
             onChange={(e) => { if (e.target.files?.[0]) handleItemFile(e.target.files[0]); e.target.value = '' }} />
         </div>
 
@@ -354,7 +357,7 @@ export default function TryOnPage({ userId, onSaved }: Props) {
             </div>
           )}
 
-          <input ref={bodyRef} type="file" accept="image/*" className="hidden"
+          <input ref={bodyRef} type="file" accept="image/*,.heic,.heif" className="hidden"
             onChange={(e) => { if (e.target.files?.[0]) handleBodyFile(e.target.files[0]); e.target.value = '' }} />
         </div>
       </div>
@@ -363,7 +366,7 @@ export default function TryOnPage({ userId, onSaved }: Props) {
       <button
         onClick={runTryOn}
         disabled={itemImages.length === 0 || loading}
-        className="w-full flex items-center justify-center gap-2.5 bg-charcoal text-white py-4 rounded-2xl text-base font-semibold hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+        className="w-full flex items-center justify-center gap-2.5 btn-mint py-4 rounded-2xl text-base font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {loading
           ? <><Sparkles className="w-5 h-5 animate-pulse" /> Generating in background…</>
@@ -426,7 +429,7 @@ export default function TryOnPage({ userId, onSaved }: Props) {
           <div className="p-5 flex flex-wrap gap-2">
             <button
               onClick={downloadResult}
-              className="flex items-center gap-1.5 bg-charcoal text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-black transition-colors"
+              className="flex items-center gap-1.5 btn-sky px-4 py-2.5 rounded-xl text-sm font-medium"
             >
               <Download className="w-4 h-4" /> Download
             </button>

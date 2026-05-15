@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Wand2, X, Download, RefreshCw, User, CheckCircle2, ImageOff, Sparkles } from 'lucide-react'
-import type { ClothingItem } from '../types'
+import type { ClothingItem, StyleImage } from '../types'
 import type { AppConfig } from '../lib/storage'
-import { getProfilePhotos } from '../lib/storage'
+import { getProfilePhotos, getStyles, saveStyles } from '../lib/storage'
 import { generateOutfitLook } from '../lib/preview'
 import { saveStyleCloud, uploadStyleImage } from '../lib/cloud'
 import { generationQueue, useGenerationJob } from '../lib/generationQueue'
@@ -11,11 +11,12 @@ interface Props {
   wardrobe: ClothingItem[]
   config: AppConfig
   userId?: string
+  onSaved?: () => void
 }
 
 const CATEGORY_ORDER = ['outerwear', 'top', 'bottom', 'dress', 'shoes', 'accessory']
 
-export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
+export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [useProfilePhoto, setUseProfilePhoto] = useState(false)
   const [resultImage, setResultImage] = useState<string | null>(null)
@@ -39,8 +40,12 @@ export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
 
   useEffect(() => {
     const onFocus = () => setProfilePhotos(getProfilePhotos())
+    window.addEventListener('daily-stylist-profile-photos', onFocus)
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('daily-stylist-profile-photos', onFocus)
+      window.removeEventListener('focus', onFocus)
+    }
   }, [])
 
   const sorted = [...wardrobe].sort((a, b) =>
@@ -59,6 +64,34 @@ export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
 
   const selectedItems = wardrobe.filter((i) => selectedIds.has(i.id))
 
+  async function saveBuilderStyle(image: string, items: ClothingItem[]): Promise<StyleImage> {
+    const style: StyleImage = {
+      id: crypto.randomUUID(),
+      image,
+      itemIds: items.map((item) => item.id),
+      source: 'outfit-builder',
+      createdAt: new Date().toISOString(),
+    }
+
+    saveStyles([style, ...getStyles()])
+    onSaved?.()
+
+    if (!userId) return style
+
+    try {
+      const imageUrl = await uploadStyleImage(userId, style.id, image)
+      const cloudStyle = { ...style, image: imageUrl }
+      await saveStyleCloud(userId, cloudStyle)
+      saveStyles([cloudStyle, ...getStyles().filter((item) => item.id !== style.id)])
+      onSaved?.()
+      return cloudStyle
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('Outfit builder cloud save failed; kept local recovery copy:', message)
+      return style
+    }
+  }
+
   async function handleGenerate() {
     if (selectedIds.size === 0 || generating) return
     setError('')
@@ -66,7 +99,6 @@ export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
 
     const items = [...selectedItems]
     const profilePhoto = (useProfilePhoto && hasProfilePhoto) ? profilePhotos[0] : null
-    const uid = userId
     const cfg = config
 
     generationQueue.start({
@@ -75,22 +107,8 @@ export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
       label: `Building outfit from ${items.length} item${items.length !== 1 ? 's' : ''}`,
       runner: async () => {
         const generatedImage = await generateOutfitLook(items, profilePhoto, cfg)
-        let finalUrl = generatedImage
-        // Auto-save to Styles in the background
-        if (uid && generatedImage) {
-          try {
-            const styleId = crypto.randomUUID()
-            finalUrl = await uploadStyleImage(uid, styleId, generatedImage)
-            await saveStyleCloud(uid, {
-              id: styleId,
-              image: finalUrl,
-              itemIds: items.map((item) => item.id),
-              source: 'outfit-builder',
-              createdAt: new Date().toISOString(),
-            })
-          } catch { /* keep raw image */ }
-        }
-        return { imageBase64: finalUrl }
+        const savedStyle = await saveBuilderStyle(generatedImage, items)
+        return { imageBase64: savedStyle.image }
       },
     })
   }
@@ -166,7 +184,7 @@ export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
           <button
             onClick={handleGenerate}
             disabled={generating}
-            className="w-full bg-charcoal text-white rounded-xl py-3 text-sm font-semibold hover:bg-black transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+            className="w-full btn-sky rounded-xl py-3 text-sm font-semibold disabled:opacity-60 flex items-center justify-center gap-2"
           >
             {generating ? (
               <>
@@ -222,7 +240,7 @@ export default function OutfitBuilderPage({ wardrobe, config, userId }: Props) {
           <div className="flex gap-2 p-3">
             <button
               onClick={handleDownload}
-              className="flex-1 flex items-center justify-center gap-2 bg-charcoal text-white rounded-xl py-2.5 text-sm font-medium hover:bg-black transition-colors"
+              className="flex-1 flex items-center justify-center gap-2 btn-coral rounded-xl py-2.5 text-sm font-medium"
             >
               <Download className="w-4 h-4" />
               Save Photo

@@ -63,7 +63,7 @@ export default function UploadModal({ config, onClose, onAdded, userId }: Props)
       if (msg.includes('QUOTA_EXCEEDED') || msg.includes('quota') || msg.includes('429')) {
         setAnalyzeError('AI quota exceeded — fill in the details below manually')
       } else if (msg.includes('INVALID_KEY') || msg.includes('401') || msg.includes('403')) {
-        setAnalyzeError('Invalid API key — go to Menu → Change Provider to fix it')
+        setAnalyzeError('Invalid API key — open Settings to update the AI provider')
       } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed to fetch')) {
         setAnalyzeError('No internet — fill in the details below manually')
       } else {
@@ -141,7 +141,7 @@ export default function UploadModal({ config, onClose, onAdded, userId }: Props)
             <input
               ref={fileRef}
               type="file"
-              accept="image/*"
+              accept="image/*,.heic,.heif"
               className="hidden"
               onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.currentTarget.value = '' }}
             />
@@ -215,7 +215,7 @@ export default function UploadModal({ config, onClose, onAdded, userId }: Props)
           <button
             onClick={handleSave}
             disabled={!canSave}
-            className="w-full bg-charcoal text-white rounded-xl py-3 text-sm font-medium hover:bg-black transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full btn-sky rounded-xl py-3 text-sm font-medium disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : 'Add to Wardrobe'}
           </button>

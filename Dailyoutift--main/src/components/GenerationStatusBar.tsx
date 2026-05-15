@@ -46,6 +46,7 @@ export default function GenerationStatusBar({ onJump }: Props) {
       const sec = Math.max(0, Math.floor((Date.now() - startedAt) / 1000))
       setElapsedSec(sec)
       const steps = STEPS_BY_KIND[job.kind] ?? STEPS_BY_KIND['try-on']
+      // Step every ~6 seconds, freeze on last step until done
       setStepIdx(Math.min(Math.floor(sec / 6), steps.length - 1))
     }, 500)
     return () => clearInterval(interval)
@@ -68,6 +69,7 @@ export default function GenerationStatusBar({ onJump }: Props) {
   const isDone = job.status === 'done'
   const isError = job.status === 'error'
 
+  // Hide finished banner after auto-dismiss (unless still running)
   if (!isRunning && !readyVisible && !isError) return null
 
   return (
@@ -83,6 +85,7 @@ export default function GenerationStatusBar({ onJump }: Props) {
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-semibold text-charcoal truncate">{job.label}</p>
             <p className="text-[11px] text-gray-400 truncate transition-opacity">{currentStep}</p>
+            {/* Indeterminate progress bar — feels more alive than a spinner */}
             <div className="mt-1.5 h-1 bg-gray-100 rounded-full overflow-hidden relative">
               <div className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-blush/0 via-blush to-blush/0 rounded-full animate-progress-slide" />
             </div>
