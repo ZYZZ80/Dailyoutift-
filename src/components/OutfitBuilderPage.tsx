@@ -105,6 +105,8 @@ export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }:
       kind: 'outfit-build',
       origin: 'build',
       label: `Building outfit from ${items.length} item${items.length !== 1 ? 's' : ''}`,
+      userId,
+      meta: { itemIds: items.map((item) => item.id), useProfilePhoto: Boolean(profilePhoto) },
       runner: async () => {
         const generatedImage = await generateOutfitLook(items, profilePhoto, cfg)
         const savedStyle = await saveBuilderStyle(generatedImage, items)

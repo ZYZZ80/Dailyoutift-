@@ -2,10 +2,24 @@ import { createClient } from '@supabase/supabase-js'
 
 export const FREE_MONTHLY_GENERATIONS = Number(process.env.FREE_MONTHLY_GENERATIONS ?? 20)
 
-export function cors(req: any, res: any, methods = 'GET, POST, OPTIONS') {
+export type ApiRequest<TBody = Record<string, unknown>> = {
+  method?: string
+  headers: Record<string, string | string[] | undefined>
+  body?: TBody
+}
+
+export type ApiResponse = {
+  setHeader: (name: string, value: string) => void
+  status: (code: number) => ApiResponse
+  json: (body: unknown) => ApiResponse
+  end: () => ApiResponse
+}
+
+export function cors(req: ApiRequest, res: ApiResponse, methods = 'GET, POST, OPTIONS') {
   const origin = req.headers.origin ?? ''
   const allowed = ['https://daily-outfit-stylist.vercel.app', 'http://localhost:5173', 'http://localhost:4173']
-  res.setHeader('Access-Control-Allow-Origin', allowed.includes(origin) ? origin : 'https://daily-outfit-stylist.vercel.app')
+  const requestOrigin = Array.isArray(origin) ? origin[0] : origin
+  res.setHeader('Access-Control-Allow-Origin', allowed.includes(requestOrigin) ? requestOrigin : 'https://daily-outfit-stylist.vercel.app')
   res.setHeader('Access-Control-Allow-Methods', methods)
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, stripe-signature')
   res.setHeader('Cache-Control', 'no-store')
@@ -31,7 +45,7 @@ export function adminClient() {
   })
 }
 
-export async function getUser(req: any) {
+export async function getUser(req: ApiRequest) {
   const { supabaseUrl, anonKey } = env()
   if (!supabaseUrl || !anonKey) return { error: 'not_configured' as const }
   const token = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '')

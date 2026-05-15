@@ -1,7 +1,6 @@
-import { cors, getAccount, getUser } from './lib/account.js'
+import { cors, getAccount, getUser, type ApiRequest, type ApiResponse } from './lib/account.js'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default async function handler(req: any, res: any) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   cors(req, res, 'GET, OPTIONS')
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'GET') return res.status(405).json({ error: 'method_not_allowed' })

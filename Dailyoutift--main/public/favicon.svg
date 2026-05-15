@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <rect width="64" height="64" rx="14" fill="#2C2C2C"/>
-  <g stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <!-- Sparkles icon (centered) -->
-    <path d="M32 14 L34.5 26 L46 28.5 L34.5 31 L32 43 L29.5 31 L18 28.5 L29.5 26 Z" stroke-width="2" fill="white" opacity="0.95"/>
-    <path d="M46 14 L47.2 18.8 L52 20 L47.2 21.2 L46 26 L44.8 21.2 L40 20 L44.8 18.8 Z" fill="white" opacity="0.7" stroke="none"/>
-    <path d="M20 42 L20.8 45.2 L24 46 L20.8 46.8 L20 50 L19.2 46.8 L16 46 L19.2 45.2 Z" fill="white" opacity="0.6" stroke="none"/>
-  </g>
-</svg>

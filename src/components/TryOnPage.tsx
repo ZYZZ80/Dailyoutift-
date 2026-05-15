@@ -168,6 +168,8 @@ export default function TryOnPage({ userId, onSaved }: Props) {
       kind: 'try-on',
       origin: 'tryon',
       label: `Trying on ${items.length} item${items.length !== 1 ? 's' : ''}`,
+      userId,
+      meta: { itemCount: items.length, hasBodyPhoto: Boolean(body) },
       runner: async () => {
         const res = await authFetch('/api/ai', {
           method: 'POST',

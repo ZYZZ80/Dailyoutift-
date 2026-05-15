@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import type { Part as GeminiPart } from '@google/generative-ai'
 import OpenAI from 'openai'
-import { checkAndRecordUsage, cors, getUser } from './lib/account.js'
+import { checkAndRecordUsage, cors, getUser, type ApiRequest, type ApiResponse } from './lib/account.js'
 
 function extractFirstJSON(text: string): string {
   const start = text.indexOf('{')
@@ -196,8 +197,7 @@ async function generateOpenAIImage(openai: OpenAI, prompt: string, size: '1024x1
   throw new Error('No image returned by OpenAI')
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default async function handler(req: any, res: any) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   cors(req, res, 'GET, POST, OPTIONS')
   if (req.method === 'OPTIONS') return res.status(200).end()
   const { openaiKey, geminiKey, provider } = getAIConfig()
@@ -274,8 +274,7 @@ export default async function handler(req: any, res: any) {
       if (action === 'outfit') {
         if (!wardrobe || !date) return res.status(400).json({ error: 'wardrobe and date required' })
         const day = weekdayFromDateKey(date as string)
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const wardrobeList = (wardrobe as any[]).map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
+        const wardrobeList = (wardrobe as Array<Record<string, unknown>>).map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
         const prompt = outfitPrompt(day, date as string, occasion, weatherHint, wardrobeList)
         for (const model of ['gpt-4o-mini', 'gpt-4o']) {
           try {
@@ -402,7 +401,7 @@ export default async function handler(req: any, res: any) {
       if (!imageBase64) return res.status(400).json({ error: 'imageBase64 required' })
       const base64Data = (imageBase64 as string).includes(',')
         ? (imageBase64 as string).split(',')[1]
-        : imageBase64
+        : String(imageBase64)
       const mimeType = (imageBase64 as string).startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
       const result = await model.generateContent([
         { inlineData: { data: base64Data, mimeType } },
@@ -414,8 +413,7 @@ export default async function handler(req: any, res: any) {
     if (action === 'outfit') {
       if (!wardrobe || !date) return res.status(400).json({ error: 'wardrobe and date required' })
       const day = weekdayFromDateKey(date as string)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const wardrobeList = (wardrobe as any[]).map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
+      const wardrobeList = (wardrobe as Array<Record<string, unknown>>).map((i) => `ID:${i.id} | ${i.name} | ${i.category} | ${i.color}`).join('\n')
       const prompt = outfitPrompt(day, date as string, occasion, weatherHint, wardrobeList)
       const result = await model.generateContent(prompt)
       return res.json({ ...parseAI(result.response.text()), date })
@@ -426,8 +424,7 @@ export default async function handler(req: any, res: any) {
       if (!items?.length) return res.status(400).json({ error: 'items required' })
       const outfitDesc = items.map((i, index) => `Item ${index + 1}: ${textItemDescription(i)}`).join('\n')
       const imageModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const parts: any[] = []
+      const parts: GeminiPart[] = []
       for (const item of items.slice(0, 5)) {
         const image = typeof item.image === 'string' ? item.image : ''
         if (!image) continue

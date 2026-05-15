@@ -1,38 +1,22 @@
-import { createClient } from '@supabase/supabase-js'
+import { adminClient, cors, env, getUser, type ApiRequest, type ApiResponse } from './lib/account.js'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default async function handler(req: any, res: any) {
-  const origin = req.headers.origin ?? ''
-  const allowed = ['https://daily-outfit-stylist.vercel.app', 'http://localhost:5173', 'http://localhost:4173']
-  if (allowed.includes(origin)) res.setHeader('Access-Control-Allow-Origin', origin)
-  else res.setHeader('Access-Control-Allow-Origin', 'https://daily-outfit-stylist.vercel.app')
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  res.setHeader('Cache-Control', 'no-store')
+export default async function handler(req: ApiRequest, res: ApiResponse) {
+  cors(req, res, 'POST, OPTIONS')
   if (req.method === 'OPTIONS') return res.status(200).end()
   if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' })
 
-  const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL
-  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+  const { serviceRoleKey } = env()
+  const admin = adminClient()
+  if (!serviceRoleKey || !admin) {
     return res.status(503).json({
       error: 'not_configured',
       details: 'Delete account needs SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY in Vercel.',
     })
   }
 
-  const token = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '')
-  if (!token) return res.status(401).json({ error: 'missing_token' })
-
-  const authClient = createClient(supabaseUrl, anonKey)
-  const { data: userData, error: userError } = await authClient.auth.getUser(token)
-  if (userError || !userData.user) return res.status(401).json({ error: 'invalid_token' })
-
-  const userId = userData.user.id
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  })
+  const auth = await getUser(req)
+  if ('error' in auth) return res.status(auth.error === 'missing_token' ? 401 : 503).json({ error: auth.error })
+  const userId = auth.user.id
 
   try {
     const deleteRows = async (table: string) => {

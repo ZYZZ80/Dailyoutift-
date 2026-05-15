@@ -149,6 +149,33 @@ export default function LoginPage({ onLogin: _onLogin }: Props) {
     }
   }
 
+  async function sendPasswordReset() {
+    if (!supabase) {
+      setError('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel.')
+      return
+    }
+    const cleanEmail = email.trim()
+    if (!cleanEmail) {
+      setError('Enter your email first, then request a reset link.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setMessage('')
+    try {
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
+        redirectTo: window.location.origin,
+      })
+      if (resetError) throw resetError
+      setMessage('Password reset link sent. Check your email.')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg.substring(0, 180))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f3ee] px-5 py-10 safe-top safe-bottom flex items-center justify-center">
       <div className="w-full max-w-[1120px] grid gap-6 lg:grid-cols-[1.02fr_0.98fr] items-stretch">
@@ -264,6 +291,17 @@ export default function LoginPage({ onLogin: _onLogin }: Props) {
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : mode === 'signup' ? <UserPlus className="w-5 h-5" /> : <Mail className="w-5 h-5" />}
               {loading ? 'Please wait...' : mode === 'signup' ? 'Create account' : 'Login with email'}
             </button>
+
+            {mode === 'signin' && (
+              <button
+                type="button"
+                onClick={sendPasswordReset}
+                disabled={loading}
+                className="mt-3 w-full text-center text-xs font-semibold text-gray-400 hover:text-charcoal disabled:opacity-50"
+              >
+                Forgot password?
+              </button>
+            )}
 
             <div className="flex items-center gap-3 my-5">
               <div className="h-px bg-gray-100 flex-1" />

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { adminClient, env } from './lib/account.js'
+import { adminClient, env, type ApiRequest, type ApiResponse } from './lib/account.js'
 
 function verifyStripeSignature(payload: string, header: string, secret: string) {
   const parts = Object.fromEntries(header.split(',').map((part) => {
@@ -16,13 +16,12 @@ function verifyStripeSignature(payload: string, header: string, secret: string) 
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
 }
 
-function rawBody(req: any) {
+function rawBody(req: ApiRequest) {
   if (typeof req.body === 'string') return req.body
   return JSON.stringify(req.body ?? {})
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default async function handler(req: any, res: any) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method_not_allowed' })
   const { stripeWebhookSecret } = env()
   const admin = adminClient()

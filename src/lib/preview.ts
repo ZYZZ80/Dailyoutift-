@@ -1,6 +1,7 @@
 // Lazy SDK loaders — see comment in claude.ts
 import type OpenAIType from 'openai'
 import type { GoogleGenerativeAI as GoogleGenerativeAIType } from '@google/generative-ai'
+import type { Part as GeminiPart } from '@google/generative-ai'
 import type { AppConfig } from './storage'
 import type { ClothingItem } from '../types'
 import { authFetch } from './authFetch'
@@ -98,8 +99,7 @@ export async function generateOutfitLook(
     const GoogleGenerativeAI = await getGoogleGenAIClass()
     const genAI = new GoogleGenerativeAI(config.apiKey)
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-preview-image-generation' })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const parts: any[] = []
+    const parts: GeminiPart[] = []
     // Include item images as visual reference (up to 4)
     for (const item of items.slice(0, 4)) {
       if (item.image?.startsWith('data:')) {

@@ -192,6 +192,8 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
           kind: 'outfit-preview',
           origin: 'today',
           label: `Generating today's outfit photo`,
+          userId: uid,
+          meta: { outfitId: outfit?.id, itemIds: outfit?.itemIds ?? [] },
           runner: async () => {
             const url = await generateOutfitPreview(photo, items, cfg)
             let localStyleId = ''

@@ -70,6 +70,20 @@ create table if not exists app_events (
   created_at timestamptz default now()
 );
 
+create table if not exists generation_jobs (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null,
+  origin text not null,
+  label text default '',
+  status text not null default 'running',
+  result_ref text,
+  error text,
+  metadata jsonb default '{}',
+  started_at timestamptz default now(),
+  completed_at timestamptz
+);
+
 -- Repair older Supabase tables that were created before the current app schema.
 -- Run this whole file again any time Supabase says a column is missing from the schema cache.
 alter table outfits add column if not exists date date;
@@ -103,6 +117,7 @@ alter table user_settings enable row level security;
 alter table subscriptions enable row level security;
 alter table generation_usage enable row level security;
 alter table app_events enable row level security;
+alter table generation_jobs enable row level security;
 
 drop policy if exists "own wardrobe"   on wardrobe_items;
 drop policy if exists "own outfits"    on outfits;
@@ -111,6 +126,7 @@ drop policy if exists "own settings"   on user_settings;
 drop policy if exists "own subscriptions read" on subscriptions;
 drop policy if exists "own usage read" on generation_usage;
 drop policy if exists "own events insert" on app_events;
+drop policy if exists "own generation jobs" on generation_jobs;
 
 create policy "own wardrobe"  on wardrobe_items for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "own outfits"   on outfits        for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -119,6 +135,7 @@ create policy "own settings"  on user_settings  for all using (auth.uid() = user
 create policy "own subscriptions read" on subscriptions for select using (auth.uid() = user_id);
 create policy "own usage read" on generation_usage for select using (auth.uid() = user_id);
 create policy "own events insert" on app_events for insert with check (auth.uid() = user_id);
+create policy "own generation jobs" on generation_jobs for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ─── Storage Buckets ─────────────────────────────────────────────────────────
 
@@ -177,3 +194,4 @@ create index if not exists outfits_user_date_idx on outfits (user_id, date desc)
 create index if not exists styles_user_created_idx on styles (user_id, created_at desc);
 create index if not exists generation_usage_user_month_idx on generation_usage (user_id, month, created_at desc);
 create index if not exists app_events_user_created_idx on app_events (user_id, created_at desc);
+create index if not exists generation_jobs_user_started_idx on generation_jobs (user_id, started_at desc);

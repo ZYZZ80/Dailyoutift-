@@ -14,6 +14,7 @@ const TABLES = {
   outfits: 'outfits',
   styles: 'styles',
   settings: 'user_settings',
+  generationJobs: 'generation_jobs',
 } as const
 
 const LEGACY_TABLES = {
@@ -73,6 +74,38 @@ export async function saveProfilePhotosCloud(userId: string, photos: string[]): 
   const { error } = await supabase.from(TABLES.settings).upsert({
     user_id: userId,
     profile_photos: urls,
+  })
+  if (error) throw new Error(error.message)
+}
+
+export interface GenerationJobCloud {
+  id: string
+  userId: string
+  kind: string
+  origin: string
+  label: string
+  status: 'running' | 'done' | 'error'
+  resultRef?: string
+  error?: string
+  metadata?: Record<string, unknown>
+  startedAt?: string
+  completedAt?: string | null
+}
+
+export async function saveGenerationJobCloud(job: GenerationJobCloud): Promise<void> {
+  if (!SUPABASE_ENABLED || !supabase) return
+  const { error } = await supabase.from(TABLES.generationJobs).upsert({
+    id: job.id,
+    user_id: job.userId,
+    kind: job.kind,
+    origin: job.origin,
+    label: job.label,
+    status: job.status,
+    result_ref: job.resultRef ?? null,
+    error: job.error ?? null,
+    metadata: job.metadata ?? {},
+    started_at: job.startedAt ?? new Date().toISOString(),
+    completed_at: job.completedAt ?? null,
   })
   if (error) throw new Error(error.message)
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Sparkles, X, Check, AlertCircle } from 'lucide-react'
+import { Sparkles, X, Check, AlertCircle, RefreshCw } from 'lucide-react'
 import { useGenerationJob, generationQueue } from '../lib/generationQueue'
 
 interface Props {
@@ -125,6 +125,13 @@ export default function GenerationStatusBar({ onJump }: Props) {
             <p className="text-[13px] font-semibold text-red-600">Generation failed</p>
             <p className="text-[11px] text-red-400 truncate">{job.error}</p>
           </div>
+          <button
+            onClick={() => generationQueue.retry(job.id)}
+            className="h-8 px-3 flex items-center gap-1.5 rounded-full bg-white border border-red-100 text-red-500 text-xs font-semibold hover:bg-red-100 transition-colors"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Retry
+          </button>
           <button
             onClick={() => generationQueue.clear(job.id)}
             className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-red-100 transition-colors"

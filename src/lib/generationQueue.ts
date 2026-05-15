@@ -7,6 +7,7 @@
  * the global status bar shows a "Done" notification.
  */
 import { useEffect, useState } from 'react'
+import { saveGenerationJobCloud } from './cloud'
 
 export type JobKind = 'try-on' | 'outfit-preview' | 'outfit-build'
 
@@ -31,6 +32,8 @@ type Listener = (job: GenerationJob | null) => void
 class GenerationQueueImpl {
   private current: GenerationJob | null = null
   private listeners = new Set<Listener>()
+  private retryRunner: (() => Promise<{ imageBase64: string; description?: string }>) | null = null
+  private retryOptions: Omit<Parameters<GenerationQueueImpl['start']>[0], 'runner'> | null = null
 
   get(): GenerationJob | null {
     return this.current
@@ -56,33 +59,84 @@ class GenerationQueueImpl {
     label: string
     runner: () => Promise<{ imageBase64: string; description?: string }>
     meta?: Record<string, unknown>
+    userId?: string
   }): string {
     const id = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const startedAt = Date.now()
     this.current = {
       id,
       kind: opts.kind,
       origin: opts.origin,
       label: opts.label,
-      startedAt: Date.now(),
+      startedAt,
       status: 'running',
       meta: opts.meta,
     }
+    this.retryRunner = opts.runner
+    this.retryOptions = { kind: opts.kind, origin: opts.origin, label: opts.label, meta: opts.meta, userId: opts.userId }
     this.emit()
+
+    if (opts.userId) {
+      saveGenerationJobCloud({
+        id,
+        userId: opts.userId,
+        kind: opts.kind,
+        origin: opts.origin,
+        label: opts.label,
+        status: 'running',
+        metadata: opts.meta,
+        startedAt: new Date(startedAt).toISOString(),
+      }).catch(() => {})
+    }
 
     opts.runner()
       .then((res) => {
         if (!this.current || this.current.id !== id) return
         this.current = { ...this.current, status: 'done', result: res }
         this.emit()
+        if (opts.userId) {
+          saveGenerationJobCloud({
+            id,
+            userId: opts.userId,
+            kind: opts.kind,
+            origin: opts.origin,
+            label: opts.label,
+            status: 'done',
+            resultRef: res.imageBase64.startsWith('data:') ? undefined : res.imageBase64,
+            metadata: opts.meta,
+            startedAt: new Date(startedAt).toISOString(),
+            completedAt: new Date().toISOString(),
+          }).catch(() => {})
+        }
       })
       .catch((e: unknown) => {
         if (!this.current || this.current.id !== id) return
         const msg = e instanceof Error ? e.message : String(e)
         this.current = { ...this.current, status: 'error', error: msg }
         this.emit()
+        if (opts.userId) {
+          saveGenerationJobCloud({
+            id,
+            userId: opts.userId,
+            kind: opts.kind,
+            origin: opts.origin,
+            label: opts.label,
+            status: 'error',
+            error: msg.substring(0, 500),
+            metadata: opts.meta,
+            startedAt: new Date(startedAt).toISOString(),
+            completedAt: new Date().toISOString(),
+          }).catch(() => {})
+        }
       })
 
     return id
+  }
+
+  retry(id?: string): string | null {
+    if (id && this.current?.id !== id) return null
+    if (!this.retryRunner || !this.retryOptions) return null
+    return this.start({ ...this.retryOptions, runner: this.retryRunner })
   }
 
   /** Clear current finished/errored job (call after the user has consumed the result) */
