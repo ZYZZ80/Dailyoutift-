@@ -44,7 +44,13 @@ export async function saveGeneratedStyleToHistory({
     return cloudStyle
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.warn('Style history cloud save failed; kept local recovery copy:', message)
+    try {
+      await saveStyleCloud(userId, localStyle, { skipImageUpload: true })
+      console.warn('Style image storage upload failed; saved History record in Supabase table instead:', message)
+    } catch (rowError) {
+      const rowMessage = rowError instanceof Error ? rowError.message : String(rowError)
+      console.warn('Style history cloud save failed; kept local recovery copy:', `${message}; ${rowMessage}`)
+    }
     return localStyle
   }
 }

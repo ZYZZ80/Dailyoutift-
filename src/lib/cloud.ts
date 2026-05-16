@@ -400,9 +400,9 @@ export async function saveOutfitCloud(userId: string, outfit: OutfitSuggestion):
   }
 }
 
-export async function saveStyleCloud(userId: string, style: StyleImage): Promise<void> {
+export async function saveStyleCloud(userId: string, style: StyleImage, options: { skipImageUpload?: boolean } = {}): Promise<void> {
   if (!SUPABASE_ENABLED || !supabase) return
-  const cloudStyle = style.image.startsWith('data:') || style.image.startsWith('blob:')
+  const cloudStyle = !options.skipImageUpload && (style.image.startsWith('data:') || style.image.startsWith('blob:'))
     ? { ...style, image: await uploadStyleImage(userId, style.id, style.image) }
     : style
   const row = styleToRow(cloudStyle, userId)
