@@ -40,7 +40,7 @@ export default async function handler(req: any, res: any) {
   const userId = object.metadata?.user_id ?? object.client_reference_id
 
   if (type === 'checkout.session.completed' && userId) {
-    await admin.from('subscriptions').upsert({
+    const { error } = await admin.from('subscriptions').upsert({
       user_id: userId,
       stripe_customer_id: object.customer,
       stripe_subscription_id: object.subscription,
@@ -48,6 +48,7 @@ export default async function handler(req: any, res: any) {
       price_id: null,
       updated_at: new Date().toISOString(),
     })
+    if (error) return res.status(500).json({ error: 'db_error', details: error.message })
   }
 
   if (type.startsWith('customer.subscription.')) {
@@ -56,9 +57,10 @@ export default async function handler(req: any, res: any) {
     const status = subscription.status ?? 'inactive'
     const priceId = subscription.items?.data?.[0]?.price?.id ?? null
     const periodEnd = subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null
-    const { data } = await admin.from('subscriptions').select('user_id').eq('stripe_customer_id', customerId).maybeSingle()
+    const { data, error: selectError } = await admin.from('subscriptions').select('user_id').eq('stripe_customer_id', customerId).maybeSingle()
+    if (selectError) return res.status(500).json({ error: 'db_error', details: selectError.message })
     if (data?.user_id) {
-      await admin.from('subscriptions').upsert({
+      const { error: upsertError } = await admin.from('subscriptions').upsert({
         user_id: data.user_id,
         stripe_customer_id: customerId,
         stripe_subscription_id: subscription.id,
@@ -67,6 +69,7 @@ export default async function handler(req: any, res: any) {
         current_period_end: periodEnd,
         updated_at: new Date().toISOString(),
       })
+      if (upsertError) return res.status(500).json({ error: 'db_error', details: upsertError.message })
     }
   }
 

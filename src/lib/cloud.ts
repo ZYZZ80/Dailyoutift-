@@ -244,15 +244,7 @@ async function fetchRows(table: string, userId: string, orderColumn: string, lim
   if (limit) query = query.limit(limit)
   const { data, error } = await query
   if (error) {
-    // Missing legacy tables should not break the app.
-    const message = error.message.toLowerCase()
-    if (
-      message.includes('does not exist') ||
-      message.includes('could not find') ||
-      message.includes('schema cache') ||
-      error.code === '42P01' ||
-      error.code === 'PGRST204'
-    ) return []
+    if (isSchemaCacheError(error)) return []
     throw new Error(error.message)
   }
   return (data ?? []) as Record<string, unknown>[]

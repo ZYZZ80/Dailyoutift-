@@ -34,12 +34,16 @@ export default async function handler(req: any, res: any) {
     auth: { autoRefreshToken: false, persistSession: false },
   })
 
+  function isSchemaCacheError(err: { message?: string; code?: string } | null) {
+    const msg = String(err?.message ?? '').toLowerCase()
+    return msg.includes('does not exist') || msg.includes('could not find') || msg.includes('schema cache') || err?.code === '42P01' || err?.code === 'PGRST204'
+  }
+
   try {
     const deleteRows = async (table: string) => {
-      try {
-        await admin.from(table).delete().eq('user_id', userId)
-      } catch {
-        // Optional legacy tables may not exist in every Supabase project.
+      const { error } = await admin.from(table).delete().eq('user_id', userId)
+      if (error && !isSchemaCacheError(error)) {
+        console.warn(`delete-account: failed to delete rows from ${table}:`, error.message)
       }
     }
 
