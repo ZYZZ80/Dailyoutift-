@@ -3,8 +3,7 @@ import { useRef, useState } from 'react'
 import type { ClothingItem, StyleImage } from '../types'
 import Img from './Img'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
-import { getStyles, saveStyles } from '../lib/storage'
-import { saveStyleCloud, uploadStyleImage } from '../lib/cloud'
+import { saveGeneratedStyleToHistory } from '../lib/styleHistory'
 
 interface Props {
   styles: StyleImage[]
@@ -59,6 +58,14 @@ export default function StylesPage({ styles, wardrobe, userId, onDelete, onSaved
     { id: 'imported', label: 'Imported', count: styles.filter((s) => s.source === 'imported').length },
   ]
 
+  async function compressImportImage(file: File) {
+    try {
+      return await convertImageFileToJpegDataUrl(file, 900, 0.62)
+    } catch {
+      return convertImageFileToJpegDataUrl(file, 650, 0.48)
+    }
+  }
+
   async function importPictures(files: FileList | null) {
     const selected = Array.from(files ?? []).filter((file) => file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(file.name))
     if (selected.length === 0) return
@@ -72,34 +79,25 @@ export default function StylesPage({ styles, wardrobe, userId, onDelete, onSaved
       for (let index = 0; index < selected.length; index += 1) {
         const file = selected[index]
         try {
-          const converted = await convertImageFileToJpegDataUrl(file, 900, 0.65)
-          const localStyle: StyleImage = {
-            id: crypto.randomUUID(),
+          const converted = await compressImportImage(file)
+          await saveGeneratedStyleToHistory({
+            userId,
             image: converted.dataUrl,
-            itemIds: [],
             source: 'imported',
-            createdAt: new Date(Date.now() - index).toISOString(),
-          }
-
-          if (userId) {
-            const imageUrl = await uploadStyleImage(userId, localStyle.id, localStyle.image)
-            const cloudStyle = { ...localStyle, image: imageUrl }
-            await saveStyleCloud(userId, cloudStyle)
-            saveStyles([cloudStyle, ...getStyles().filter((style) => style.id !== cloudStyle.id)])
-          } else {
-            saveStyles([localStyle, ...getStyles()])
-          }
+          })
           imported += 1
           onSaved?.()
-        } catch {
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          console.warn(`Could not import ${file.name}:`, message)
           failed += 1
         } finally {
           setImportProgress({ done: index + 1, total: selected.length })
-          await new Promise((resolve) => window.setTimeout(resolve, 50))
+          await new Promise((resolve) => window.setTimeout(resolve, 100))
         }
       }
 
-      if (imported === 0) throw new Error('Could not import these pictures. Try fewer files or smaller images.')
+      if (imported === 0) throw new Error('Could not import these pictures. Try normal JPG/PNG screenshots, or import one picture at a time.')
       setImportMsg(
         failed > 0
           ? `Imported ${imported} picture${imported === 1 ? '' : 's'}. ${failed} failed; try those again one at a time.`
