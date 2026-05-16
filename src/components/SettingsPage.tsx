@@ -248,7 +248,7 @@ export default function SettingsPage({ user, config, counts, onChangeProvider, o
             Manage billing
           </button>
         </div>
-        <p className="text-xs text-gray-400">Billing is powered by Stripe. Add Stripe env vars before accepting paid users.</p>
+        <p className="text-xs text-gray-400">Free includes 10 built-in AI generations each month. Pro billing is powered by Stripe.</p>
       </section>
 
       <section className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5 space-y-4">

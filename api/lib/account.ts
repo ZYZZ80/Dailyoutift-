@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 
-export const FREE_MONTHLY_GENERATIONS = Number(process.env.FREE_MONTHLY_GENERATIONS ?? 20)
+export const FREE_MONTHLY_GENERATIONS = Number(process.env.FREE_MONTHLY_GENERATIONS ?? 10)
 
 export type ApiRequest<TBody = Record<string, unknown>> = {
   method?: string
