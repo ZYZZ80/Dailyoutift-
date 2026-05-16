@@ -278,14 +278,7 @@ async function fetchRows(table: string, userId: string, orderColumn: string, lim
   const { data, error } = await query
   if (error) {
     // Missing legacy tables should not break the app.
-    const message = error.message.toLowerCase()
-    if (
-      message.includes('does not exist') ||
-      message.includes('could not find') ||
-      message.includes('schema cache') ||
-      error.code === '42P01' ||
-      error.code === 'PGRST204'
-    ) return []
+    if (isSchemaCacheError(error)) return []
     throw new Error(error.message)
   }
   return (data ?? []) as Record<string, unknown>[]
@@ -461,7 +454,7 @@ export async function getConfigCloud(userId: string): Promise<AppConfig | null> 
       .eq('user_id', userId)
       .maybeSingle()
     if (error) {
-      if (error.message.toLowerCase().includes('does not exist') || error.code === '42P01') return null
+      if (isSchemaCacheError(error)) return null
       throw new Error(error.message)
     }
     return data

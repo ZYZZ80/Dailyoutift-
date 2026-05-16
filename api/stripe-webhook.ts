@@ -39,7 +39,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   const userId = object.metadata?.user_id ?? object.client_reference_id
 
   if (type === 'checkout.session.completed' && userId) {
-    await admin.from('subscriptions').upsert({
+    const { error } = await admin.from('subscriptions').upsert({
       user_id: userId,
       stripe_customer_id: object.customer,
       stripe_subscription_id: object.subscription,
@@ -47,6 +47,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       price_id: null,
       updated_at: new Date().toISOString(),
     })
+    if (error) {
+      console.warn('Stripe checkout subscription upsert failed:', error.message)
+      return res.status(500).json({ error: 'subscription_update_failed' })
+    }
   }
 
   if (type.startsWith('customer.subscription.')) {
@@ -57,7 +61,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const periodEnd = subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null
     const { data } = await admin.from('subscriptions').select('user_id').eq('stripe_customer_id', customerId).maybeSingle()
     if (data?.user_id) {
-      await admin.from('subscriptions').upsert({
+      const { error } = await admin.from('subscriptions').upsert({
         user_id: data.user_id,
         stripe_customer_id: customerId,
         stripe_subscription_id: subscription.id,
@@ -66,6 +70,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         current_period_end: periodEnd,
         updated_at: new Date().toISOString(),
       })
+      if (error) {
+        console.warn('Stripe subscription status upsert failed:', error.message)
+        return res.status(500).json({ error: 'subscription_update_failed' })
+      }
     }
   }
 

@@ -1,5 +1,16 @@
 import { adminClient, cors, env, getUser, type ApiRequest, type ApiResponse } from './lib/account.js'
 
+function isSchemaCacheError(error: { message?: string; code?: string } | null | undefined) {
+  const message = String(error?.message ?? '').toLowerCase()
+  return (
+    message.includes('does not exist') ||
+    message.includes('could not find') ||
+    message.includes('schema cache') ||
+    error?.code === '42P01' ||
+    error?.code === 'PGRST204'
+  )
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   cors(req, res, 'POST, OPTIONS')
   if (req.method === 'OPTIONS') return res.status(200).end()
@@ -20,11 +31,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   try {
     const deleteRows = async (table: string) => {
-      try {
-        await admin.from(table).delete().eq('user_id', userId)
-      } catch {
-        // Optional legacy tables may not exist in every Supabase project.
+      const { error } = await admin.from(table).delete().eq('user_id', userId)
+      if (!error) return
+      if (isSchemaCacheError(error)) return
+      console.warn(`Delete account row cleanup failed for ${table}:`, error.message)
+    }
+
+    const deleteStorageFolder = async (bucket: string) => {
+      const { data, error } = await admin.storage.from(bucket).list(userId, { limit: 1000 })
+      if (error) {
+        if (!isSchemaCacheError(error)) console.warn(`Delete account storage list failed for ${bucket}:`, error.message)
+        return
       }
+      const paths = (data ?? []).map((item) => `${userId}/${item.name}`)
+      if (paths.length === 0) return
+      const { error: removeError } = await admin.storage.from(bucket).remove(paths)
+      if (removeError) console.warn(`Delete account storage cleanup failed for ${bucket}:`, removeError.message)
     }
 
     await Promise.all([
@@ -37,11 +59,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       deleteRows('user_config'),
     ])
 
-    await Promise.all(['wardrobe', 'styles', 'profile'].map(async (bucket) => {
-      const { data } = await admin.storage.from(bucket).list(userId, { limit: 1000 })
-      const paths = (data ?? []).map((item) => `${userId}/${item.name}`)
-      if (paths.length > 0) await admin.storage.from(bucket).remove(paths)
-    }))
+    await Promise.all(['wardrobe', 'styles', 'profile'].map(deleteStorageFolder))
 
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId)
     if (deleteError) throw deleteError

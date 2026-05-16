@@ -35,7 +35,7 @@ function dataUrlToBuffer(dataUrl: string) {
 
 async function ensureStylesBucket(admin: NonNullable<ReturnType<typeof adminClient>>) {
   const { error } = await admin.storage.createBucket('styles', { public: true })
-  if (error && !error.message.toLowerCase().includes('already exists')) throw error
+  if (error && !String(error.message ?? '').toLowerCase().includes('already exists')) throw error
 }
 
 export default async function handler(req: ApiRequest<SaveStyleBody>, res: ApiResponse) {
