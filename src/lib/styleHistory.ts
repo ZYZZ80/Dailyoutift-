@@ -1,6 +1,7 @@
 import type { StyleImage } from '../types'
 import { saveStyleCloud, uploadStyleImage } from './cloud'
 import { getStyles, saveStyles } from './storage'
+import { authFetch } from './authFetch'
 
 interface SaveGeneratedStyleInput {
   userId?: string
@@ -12,6 +13,19 @@ interface SaveGeneratedStyleInput {
 
 function mergeSavedStyle(style: StyleImage) {
   saveStyles([style, ...getStyles().filter((item) => item.id !== style.id)])
+}
+
+async function saveStyleViaServer(style: StyleImage): Promise<StyleImage> {
+  const res = await authFetch('/api/save-style', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ style }),
+  })
+  const data = await res.json().catch(() => ({})) as { style?: StyleImage; error?: string; details?: string }
+  if (!res.ok || !data.style) {
+    throw new Error(data.details || data.error || `Style save failed (${res.status})`)
+  }
+  return data.style
 }
 
 export async function saveGeneratedStyleToHistory({
@@ -30,11 +44,19 @@ export async function saveGeneratedStyleToHistory({
     createdAt: new Date().toISOString(),
   }
 
-  // Local-first save: History keeps the generated design even if cloud upload,
-  // schema cache, or the network fails after generation completes.
-  mergeSavedStyle(localStyle)
+  if (!userId) {
+    mergeSavedStyle(localStyle)
+    return localStyle
+  }
 
-  if (!userId) return localStyle
+  try {
+    const cloudStyle = await saveStyleViaServer(localStyle)
+    mergeSavedStyle(cloudStyle)
+    return cloudStyle
+  } catch (serverError) {
+    const serverMessage = serverError instanceof Error ? serverError.message : String(serverError)
+    console.warn('Server style save failed; trying browser Supabase upload:', serverMessage)
+  }
 
   try {
     const imageUrl = await uploadStyleImage(userId, localStyle.id, image)
@@ -51,6 +73,7 @@ export async function saveGeneratedStyleToHistory({
       const rowMessage = rowError instanceof Error ? rowError.message : String(rowError)
       console.warn('Style history cloud save failed; kept local recovery copy:', `${message}; ${rowMessage}`)
     }
+    mergeSavedStyle(localStyle)
     return localStyle
   }
 }

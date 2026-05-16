@@ -374,7 +374,10 @@ export function saveStyles(styles: StyleImage[]): void {
       error instanceof DOMException &&
       (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED' || error.code === 22)
     if (!isQuotaError) throw error
-    stylesCache = styles.filter((style) => !style.image.startsWith('data:')).slice(0, 1000)
+    stylesCache = styles
+      .filter((style) => !style.image.startsWith('data:') && !style.image.startsWith('blob:'))
+      .slice(0, 1000)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     localStorage.setItem(STYLES_KEY, JSON.stringify(stylesCache))
   }
   window.dispatchEvent(new CustomEvent('daily-stylist-styles', { detail: stylesCache }))
