@@ -2,10 +2,10 @@ import { useState, useCallback, useEffect } from 'react'
 import { Wand2, X, Download, RefreshCw, User, CheckCircle2, ImageOff, Sparkles } from 'lucide-react'
 import type { ClothingItem, StyleImage } from '../types'
 import type { AppConfig } from '../lib/storage'
-import { getProfilePhotos, getStyles, saveStyles } from '../lib/storage'
+import { getProfilePhotos } from '../lib/storage'
 import { generateOutfitLook } from '../lib/preview'
-import { saveStyleCloud, uploadStyleImage } from '../lib/cloud'
 import { generationQueue, useGenerationJob } from '../lib/generationQueue'
+import { saveGeneratedStyleToHistory } from '../lib/styleHistory'
 
 interface Props {
   wardrobe: ClothingItem[]
@@ -65,31 +65,14 @@ export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }:
   const selectedItems = wardrobe.filter((i) => selectedIds.has(i.id))
 
   async function saveBuilderStyle(image: string, items: ClothingItem[]): Promise<StyleImage> {
-    const style: StyleImage = {
-      id: crypto.randomUUID(),
+    const style = await saveGeneratedStyleToHistory({
+      userId,
       image,
       itemIds: items.map((item) => item.id),
       source: 'outfit-builder',
-      createdAt: new Date().toISOString(),
-    }
-
-    saveStyles([style, ...getStyles()])
+    })
     onSaved?.()
-
-    if (!userId) return style
-
-    try {
-      const imageUrl = await uploadStyleImage(userId, style.id, image)
-      const cloudStyle = { ...style, image: imageUrl }
-      await saveStyleCloud(userId, cloudStyle)
-      saveStyles([cloudStyle, ...getStyles().filter((item) => item.id !== style.id)])
-      onSaved?.()
-      return cloudStyle
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn('Outfit builder cloud save failed; kept local recovery copy:', message)
-      return style
-    }
+    return style
   }
 
   async function handleGenerate() {

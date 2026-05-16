@@ -4,12 +4,13 @@ import {
   Camera, Plus, RefreshCw, CheckCircle, Info,
 } from 'lucide-react'
 import type { AppConfig } from '../lib/storage'
-import { getProfilePhotos, getStyles, saveProfilePhotos, saveStyles } from '../lib/storage'
-import { saveProfilePhotosCloud, saveStyleCloud, uploadStyleImage, uploadProfilePhoto } from '../lib/cloud'
+import { getProfilePhotos, saveProfilePhotos } from '../lib/storage'
+import { saveProfilePhotosCloud, uploadProfilePhoto } from '../lib/cloud'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
 import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 import type { StyleImage } from '../types'
 import { authFetch } from '../lib/authFetch'
+import { saveGeneratedStyleToHistory } from '../lib/styleHistory'
 
 interface Props {
   config: AppConfig
@@ -56,33 +57,13 @@ export default function TryOnPage({ userId, onSaved }: Props) {
   const bodyRef = useRef<HTMLInputElement>(null)
 
   async function saveTryOnStyle(image: string): Promise<StyleImage> {
-    const style: StyleImage = {
-      id: crypto.randomUUID(),
+    const style = await saveGeneratedStyleToHistory({
+      userId,
       image,
-      itemIds: [],
       source: 'try-on',
-      createdAt: new Date().toISOString(),
-    }
-
-    // Keep a recovery copy first so Pictures never loses a finished try-on
-    // because of a temporary Supabase table, storage, or network issue.
-    saveStyles([style, ...getStyles()])
+    })
     onSaved?.()
-
-    if (!userId) return style
-
-    try {
-      const imageUrl = await uploadStyleImage(userId, style.id, image)
-      const cloudStyle = { ...style, image: imageUrl }
-      await saveStyleCloud(userId, cloudStyle)
-      saveStyles([cloudStyle, ...getStyles().filter((item) => item.id !== style.id)])
-      onSaved?.()
-      return cloudStyle
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.warn('Try-on cloud save failed; kept local recovery copy:', message)
-      return style
-    }
+    return style
   }
 
   // When the queue's job for this page finishes, pull the result into local state

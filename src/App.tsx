@@ -137,6 +137,12 @@ export default function App() {
   }, [generationJob?.id, generationJob?.status, refresh])
 
   useEffect(() => {
+    const syncStyles = () => setStyles(getStyles())
+    window.addEventListener('daily-stylist-styles', syncStyles)
+    return () => window.removeEventListener('daily-stylist-styles', syncStyles)
+  }, [])
+
+  useEffect(() => {
     if (proxyChecked.current) return
     proxyChecked.current = true
     preloadAllPages() // warm all the lazy chunks on idle for instant tab switches

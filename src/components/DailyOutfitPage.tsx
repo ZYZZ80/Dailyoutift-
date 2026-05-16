@@ -6,13 +6,14 @@ import {
 import type { ClothingItem, OutfitSuggestion } from '../types'
 import { generateOutfit } from '../lib/claude'
 import { generateOutfitPreview } from '../lib/preview'
-import { getProfilePhotos, getStyles, saveProfilePhotos, saveStyles, type AppConfig } from '../lib/storage'
-import { addItemCloud, saveOutfitCloud, saveProfilePhotosCloud, saveStyleCloud, uploadProfilePhoto, uploadStyleImage } from '../lib/cloud'
+import { getProfilePhotos, saveProfilePhotos, type AppConfig } from '../lib/storage'
+import { addItemCloud, saveOutfitCloud, saveProfilePhotosCloud, uploadProfilePhoto } from '../lib/cloud'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
 import { needsWash as itemNeedsWash } from '../lib/laundry'
 import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 import { fetchWeather, weatherToPromptHint, type WeatherInfo } from '../lib/weather'
 import { formatDateKey, localDateKey } from '../lib/dates'
+import { saveGeneratedStyleToHistory } from '../lib/styleHistory'
 
 const OCCASIONS = [
   { id: 'Casual',     emoji: '😊' },
@@ -37,19 +38,6 @@ interface Props {
 }
 
 type AgentStep = 'idle' | 'outfit' | 'preview' | 'done'
-
-function saveDailyPreviewToHistory(styleId: string, image: string, outfit: OutfitSuggestion) {
-  const style = {
-    id: styleId,
-    image,
-    itemIds: outfit.itemIds,
-    outfitId: outfit.id,
-    source: 'daily-preview' as const,
-    createdAt: new Date().toISOString(),
-  }
-  saveStyles([style, ...getStyles().filter((item) => item.id !== styleId)])
-  return style
-}
 
 export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfitGenerated, userId, dailyStreak = 0 }: Props) {
   const [selectedOccasion, setSelectedOccasion] = useState('Casual')
@@ -196,33 +184,23 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
           meta: { outfitId: outfit?.id, itemIds: outfit?.itemIds ?? [] },
           runner: async () => {
             const url = await generateOutfitPreview(photo, items, cfg)
-            let localStyleId = ''
-            // Auto-save to Styles & link to outfit in the background
             if (url && outfit) {
-              localStyleId = crypto.randomUUID()
-              saveDailyPreviewToHistory(localStyleId, url, outfit)
+              const savedStyle = await saveGeneratedStyleToHistory({
+                userId: uid,
+                image: url,
+                itemIds: outfit.itemIds,
+                outfitId: outfit.id,
+                source: 'daily-preview',
+              })
               cb()
-            }
-            if (url && uid && outfit) {
-              try {
-                const styleId = localStyleId || crypto.randomUUID()
-                const imageUrl = await uploadStyleImage(uid, styleId, url)
-                const withPreview = { ...outfit, previewImage: imageUrl }
-                saveDailyPreviewToHistory(styleId, imageUrl, withPreview)
-                await saveStyleCloud(uid, {
-                  id: styleId,
-                  image: imageUrl,
-                  itemIds: withPreview.itemIds,
-                  outfitId: withPreview.id,
-                  source: 'daily-preview',
-                  createdAt: new Date().toISOString(),
+              if (uid) {
+                await saveOutfitCloud(uid, { ...outfit, previewImage: savedStyle.image }).catch((error) => {
+                  const message = error instanceof Error ? error.message : String(error)
+                  console.warn('Daily outfit preview link failed; saved History image remains:', message)
                 })
-                await saveOutfitCloud(uid, withPreview)
-                cb()
-                return { imageBase64: imageUrl }
-              } catch {
                 cb()
               }
+              return { imageBase64: savedStyle.image }
             }
             return { imageBase64: url }
           },
@@ -242,22 +220,20 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
       const url = await generateOutfitPreview(primaryPhoto, outfitItems, config)
       setPreviewImage(url)
       if (url && todayOutfit) {
-        const styleId = crypto.randomUUID()
-        saveDailyPreviewToHistory(styleId, url, todayOutfit)
+        const savedStyle = await saveGeneratedStyleToHistory({
+          userId,
+          image: url,
+          itemIds: todayOutfit.itemIds,
+          outfitId: todayOutfit.id,
+          source: 'daily-preview',
+        })
+        setPreviewImage(savedStyle.image)
         onOutfitGenerated()
         if (userId) {
-          const imageUrl = await uploadStyleImage(userId, styleId, url)
-          const withPreview = { ...todayOutfit, previewImage: imageUrl }
-          saveDailyPreviewToHistory(styleId, imageUrl, withPreview)
-          await saveStyleCloud(userId, {
-            id: styleId,
-            image: imageUrl,
-            itemIds: withPreview.itemIds,
-            outfitId: withPreview.id,
-            source: 'daily-preview',
-            createdAt: new Date().toISOString(),
+          await saveOutfitCloud(userId, { ...todayOutfit, previewImage: savedStyle.image }).catch((error) => {
+            const message = error instanceof Error ? error.message : String(error)
+            console.warn('Manual preview outfit link failed; saved History image remains:', message)
           })
-          await saveOutfitCloud(userId, withPreview)
           onOutfitGenerated()
         }
       }

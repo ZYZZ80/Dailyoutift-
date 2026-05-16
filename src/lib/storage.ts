@@ -377,6 +377,7 @@ export function saveStyles(styles: StyleImage[]): void {
     stylesCache = styles.filter((style) => !style.image.startsWith('data:')).slice(0, 1000)
     localStorage.setItem(STYLES_KEY, JSON.stringify(stylesCache))
   }
+  window.dispatchEvent(new CustomEvent('daily-stylist-styles', { detail: stylesCache }))
 }
 
 // ── Cloud snapshot (full replace, used after cloud sync) ───────────────────
