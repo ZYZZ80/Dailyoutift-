@@ -5,6 +5,7 @@ const WARDROBE_KEY    = 'daily-stylist-wardrobe'
 const OUTFITS_KEY     = 'daily-stylist-outfits'
 const CONFIG_KEY      = 'daily-stylist-config'
 const PHOTOS_KEY      = 'daily-stylist-profile-photos'
+const DELETED_STYLES_KEY = 'daily-stylist-deleted-styles'
 
 export interface AppConfig {
   provider: 'openai' | 'gemini' | 'ollama' | 'proxy'
@@ -192,6 +193,12 @@ export function saveOutfit(outfit: OutfitSuggestion): void {
 // ── Styles cache ───────────────────────────────────────────────────────────
 const STYLES_KEY = 'daily-stylist-styles'
 let stylesCache: StyleImage[] | null = null
+interface DeletedStyleRecord {
+  id: string
+  image?: string
+  outfitId?: string
+  deletedAt: string
+}
 const LEGACY_STYLE_KEYS = [
   'daily-stylist-style-images',
   'daily-stylist-style-gallery',
@@ -306,6 +313,35 @@ function getLegacyStyles(): StyleImage[] {
   return found
 }
 
+function getDeletedStyleRecords(): DeletedStyleRecord[] {
+  try {
+    return JSON.parse(localStorage.getItem(DELETED_STYLES_KEY) || '[]') as DeletedStyleRecord[]
+  } catch {
+    return []
+  }
+}
+
+export function isStyleDeleted(style: Pick<StyleImage, 'id' | 'image' | 'outfitId'>): boolean {
+  return getDeletedStyleRecords().some((record) => (
+    record.id === style.id ||
+    Boolean(record.outfitId && style.outfitId && record.outfitId === style.outfitId) ||
+    Boolean(record.image && style.image && record.image === style.image)
+  ))
+}
+
+export function markStyleDeleted(style: Pick<StyleImage, 'id' | 'image' | 'outfitId'>): void {
+  const current = getDeletedStyleRecords()
+  const record: DeletedStyleRecord = {
+    id: style.id,
+    image: style.image || undefined,
+    outfitId: style.outfitId || undefined,
+    deletedAt: new Date().toISOString(),
+  }
+  const next = [record, ...current.filter((item) => item.id !== record.id)].slice(0, 1000)
+  localStorage.setItem(DELETED_STYLES_KEY, JSON.stringify(next))
+  stylesCache = stylesCache ? stylesCache.filter((item) => !isStyleDeleted(item)) : null
+}
+
 export function getStyles(): StyleImage[] {
   if (stylesCache) return stylesCache
   try {
@@ -314,6 +350,7 @@ export function getStyles(): StyleImage[] {
     const seen = new Set<string>()
     stylesCache = merged
       .filter((style) => style.image)
+      .filter((style) => !isStyleDeleted(style))
       .filter((style) => {
         const key = `${style.id}:${style.image}`
         if (seen.has(key)) return false
@@ -327,6 +364,7 @@ export function getStyles(): StyleImage[] {
 export function saveStyles(styles: StyleImage[]): void {
   stylesCache = styles
     .filter((style) => style.image)
+    .filter((style) => !isStyleDeleted(style))
     .slice(0, 1000)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   try {

@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { FileText, History, Shirt, Sparkles, Settings, Menu, X, LogOut, Loader2, CalendarDays, Wand2, ShoppingBag } from 'lucide-react'
-import { getConfig, getWardrobe, saveConfig, getOutfits, getStyles, saveWardrobe, saveOutfitsSnapshot, saveStyles, saveProfilePhotos, getProfilePhotos, type AppConfig } from './lib/storage'
+import { getConfig, getWardrobe, saveConfig, getOutfits, getStyles, saveWardrobe, saveOutfitsSnapshot, saveStyles, saveProfilePhotos, getProfilePhotos, isStyleDeleted, markStyleDeleted, type AppConfig } from './lib/storage'
 import { supabase, SUPABASE_ENABLED } from './lib/supabase'
 import type { User } from '@supabase/supabase-js'
 import { checkProxy } from './lib/claude'
@@ -88,6 +88,7 @@ function mergeStylesForDisplay(cloudStyles: StyleImage[], localStyles: StyleImag
   const seen = new Set<string>()
   return [...localStyles, ...cloudStyles]
     .filter((style) => style.image)
+    .filter((style) => !isStyleDeleted(style))
     .filter((style) => {
       const key = `${style.id}:${style.image}`
       if (seen.has(key)) return false
@@ -357,15 +358,22 @@ export default function App() {
   }
 
   function handleDeleteStyle(styleId: string) {
+    const target = allStyles.find((style) => style.id === styleId)
+    if (target) markStyleDeleted(target)
+
     if (user) {
       const derivedOutfitId = styleId.startsWith('derived-') ? styleId.replace(/^derived-/, '') : ''
       if (derivedOutfitId) clearOutfitPreviewCloud(user.id, derivedOutfitId).catch(() => {})
       else removeStyleCloud(user.id, styleId).catch(() => {})
     }
-    setStyles((prev) => prev.filter((s) => s.id !== styleId))
+    const nextStyles = getStyles().filter((style) => style.id !== styleId && style.outfitId !== target?.outfitId)
+    saveStyles(nextStyles)
+    setStyles(nextStyles)
     if (styleId.startsWith('derived-')) {
       const outfitId = styleId.replace(/^derived-/, '')
-      setOutfits((prev) => prev.map((outfit) => outfit.id === outfitId ? { ...outfit, previewImage: undefined } : outfit))
+      const nextOutfits = getOutfits().map((outfit) => outfit.id === outfitId ? { ...outfit, previewImage: undefined } : outfit)
+      saveOutfitsSnapshot(nextOutfits)
+      setOutfits(nextOutfits)
     }
   }
 
@@ -433,8 +441,10 @@ export default function App() {
       source: 'daily-preview' as const,
       createdAt: o.generatedAt,
     }))
+    .filter((style) => !isStyleDeleted(style))
   const allStyles: StyleImage[] = [...styles, ...derivedStyles]
     .filter((style) => style.image)
+    .filter((style) => !isStyleDeleted(style))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const styleCount = allStyles.length
   const dailyStreak = getDailyStreak(outfits)
