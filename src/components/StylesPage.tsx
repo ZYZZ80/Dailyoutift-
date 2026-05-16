@@ -31,6 +31,7 @@ export default function StylesPage({ styles, wardrobe, userId, onDelete, onSaved
   const [filter, setFilter] = useState<Filter>('all')
   const [search, setSearch] = useState('')
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState({ done: 0, total: 0 })
   const [importMsg, setImportMsg] = useState('')
   const importRef = useRef<HTMLInputElement>(null)
   const wardrobeMap = Object.fromEntries(wardrobe.map((item) => [item.id, item]))
@@ -63,42 +64,52 @@ export default function StylesPage({ styles, wardrobe, userId, onDelete, onSaved
     if (selected.length === 0) return
 
     setImporting(true)
+    setImportProgress({ done: 0, total: selected.length })
     setImportMsg('')
+    let imported = 0
+    let failed = 0
     try {
-      const createdAt = new Date().toISOString()
-      const localStyles = await Promise.all(selected.map(async (file, index) => {
-        const converted = await convertImageFileToJpegDataUrl(file, 1200, 0.75)
-        return {
-          id: crypto.randomUUID(),
-          image: converted.dataUrl,
-          itemIds: [],
-          source: 'imported' as const,
-          createdAt: new Date(Date.now() - index).toISOString() || createdAt,
-        }
-      }))
+      for (let index = 0; index < selected.length; index += 1) {
+        const file = selected[index]
+        try {
+          const converted = await convertImageFileToJpegDataUrl(file, 900, 0.65)
+          const localStyle: StyleImage = {
+            id: crypto.randomUUID(),
+            image: converted.dataUrl,
+            itemIds: [],
+            source: 'imported',
+            createdAt: new Date(Date.now() - index).toISOString(),
+          }
 
-      saveStyles([...localStyles, ...getStyles()])
-      onSaved?.()
-
-      if (userId) {
-        const cloudStyles: StyleImage[] = []
-        for (const style of localStyles) {
-          const imageUrl = await uploadStyleImage(userId, style.id, style.image)
-          const cloudStyle = { ...style, image: imageUrl }
-          await saveStyleCloud(userId, cloudStyle)
-          cloudStyles.push(cloudStyle)
+          if (userId) {
+            const imageUrl = await uploadStyleImage(userId, localStyle.id, localStyle.image)
+            const cloudStyle = { ...localStyle, image: imageUrl }
+            await saveStyleCloud(userId, cloudStyle)
+            saveStyles([cloudStyle, ...getStyles().filter((style) => style.id !== cloudStyle.id)])
+          } else {
+            saveStyles([localStyle, ...getStyles()])
+          }
+          imported += 1
+          onSaved?.()
+        } catch {
+          failed += 1
+        } finally {
+          setImportProgress({ done: index + 1, total: selected.length })
+          await new Promise((resolve) => window.setTimeout(resolve, 50))
         }
-        const importedIds = new Set<string>(localStyles.map((style) => style.id))
-        saveStyles([...cloudStyles, ...getStyles().filter((style) => !importedIds.has(style.id))])
-        onSaved?.()
-        setImportMsg(`Imported ${cloudStyles.length} generated picture${cloudStyles.length === 1 ? '' : 's'} to your account.`)
-      } else {
-        setImportMsg(`Imported ${localStyles.length} generated picture${localStyles.length === 1 ? '' : 's'} locally.`)
       }
+
+      if (imported === 0) throw new Error('Could not import these pictures. Try fewer files or smaller images.')
+      setImportMsg(
+        failed > 0
+          ? `Imported ${imported} picture${imported === 1 ? '' : 's'}. ${failed} failed; try those again one at a time.`
+          : `Imported ${imported} generated picture${imported === 1 ? '' : 's'} to ${userId ? 'your account' : 'this browser'}.`,
+      )
     } catch (error) {
       setImportMsg(error instanceof Error ? error.message : 'Could not import generated pictures.')
     } finally {
       setImporting(false)
+      setImportProgress({ done: 0, total: 0 })
       if (importRef.current) importRef.current.value = ''
     }
   }
@@ -124,7 +135,7 @@ export default function StylesPage({ styles, wardrobe, userId, onDelete, onSaved
           className="inline-flex items-center gap-2 btn-coral px-4 py-2.5 rounded-xl text-sm font-medium disabled:opacity-50"
         >
           {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-          Import pictures
+          {importing && importProgress.total > 0 ? `${importProgress.done}/${importProgress.total}` : 'Import pictures'}
         </button>
         <input
           ref={importRef}
