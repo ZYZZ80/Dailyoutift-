@@ -2,7 +2,7 @@ import { adminClient, cors, getUser, type ApiRequest, type ApiResponse } from '.
 
 type StyleSource = 'daily-preview' | 'outfit-builder' | 'try-on' | 'imported'
 
-interface SaveStyleBody {
+interface SaveStyleBody extends Record<string, unknown> {
   style?: {
     id?: string
     image?: string
