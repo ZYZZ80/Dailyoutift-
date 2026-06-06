@@ -20,6 +20,7 @@ export default function Img({ src, thumb, eager, alt = '', className = '', style
   const [loaded, setLoaded] = useState(false)
   const [useOriginal, setUseOriginal] = useState(false)
   const [broken, setBroken] = useState(false)
+  const missing = !src
 
   // If it's a Supabase-hosted image and a thumb size was requested, swap to the
   // /render/image/ transform endpoint which serves resized WebP. ~10x smaller.
@@ -29,16 +30,16 @@ export default function Img({ src, thumb, eager, alt = '', className = '', style
                `${finalSrc.includes('?') ? '&' : '?'}width=${thumb}&resize=cover&quality=75`
   }
 
-  if (broken) {
+  if (missing || broken) {
     return (
       <div
         role="img"
-        aria-label={alt}
+        aria-label={alt || 'Image unavailable'}
         className={`${className} bg-gray-100 text-gray-300 flex flex-col items-center justify-center gap-2`}
         style={style}
       >
         <ImageOff className="w-6 h-6" strokeWidth={1.5} />
-        <span className="text-[10px] font-medium">Image unavailable</span>
+        <span className="text-[10px] font-medium">{missing ? 'No image' : 'Image unavailable'}</span>
       </div>
     )
   }

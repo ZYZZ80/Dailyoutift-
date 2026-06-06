@@ -6,6 +6,7 @@ import { saveOutfit, type AppConfig } from '../lib/storage'
 import { addItemCloud, saveOutfitCloud } from '../lib/cloud'
 import { isWashableItem } from '../lib/laundry'
 import { formatDateKey, localDateKey, weekDatesFor } from '../lib/dates'
+import Img from './Img'
 
 interface Props {
   wardrobe: ClothingItem[]
@@ -319,7 +320,7 @@ export default function WeekPlanPage({ wardrobe, outfits, config, onUpdate, user
                       return (
                         <div key={item.id} className="flex-shrink-0 w-16 text-center">
                           <div className={`w-16 h-16 rounded-xl overflow-hidden border ${overLimit ? 'border-amber-300' : 'border-gray-100'}`}>
-                            <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                            <Img src={item.image} alt={item.name} thumb={140} className="w-full h-full object-cover" />
                           </div>
                           <p className="text-[10px] text-gray-500 mt-1 truncate">{item.name}</p>
                           {usedThisWeek > 1 && <p className="text-[9px] text-amber-500">x{usedThisWeek} this week</p>}

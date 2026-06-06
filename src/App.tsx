@@ -460,7 +460,7 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: <Sparkles className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'today',    label: 'Today',    icon: <Sparkles className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'wardrobe', label: 'Wardrobe', icon: <Shirt className="w-5 h-5" strokeWidth={1.5} />, badge: needsWashCount > 0 ? needsWashCount : undefined },
-    { id: 'tryon',    label: 'Try Buy',  icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
+    { id: 'tryon',    label: 'Try-On',   icon: <ShoppingBag className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'build',    label: 'Builder',  icon: <Wand2 className="w-5 h-5" strokeWidth={1.5} /> },
     { id: 'styles',   label: 'History',  icon: <History className="w-5 h-5" strokeWidth={1.5} />, badge: styleCount > 0 ? styleCount : undefined },
     { id: 'week',     label: 'Week',     icon: <CalendarDays className="w-5 h-5" strokeWidth={1.5} /> },
@@ -514,7 +514,6 @@ export default function App() {
         ))}
       </nav>
       <div className="p-3 border-t border-white/10 space-y-1">
-        <button onClick={() => { setTab('settings'); onClose?.() }} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-white/70 transition-colors"><Settings className="w-4 h-4" />Settings</button>
         {SUPABASE_ENABLED && user && <button onClick={handleSignOut} className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm text-white/40 hover:bg-white/5 hover:text-red-400 transition-colors"><LogOut className="w-4 h-4" />Sign Out</button>}
       </div>
     </>)

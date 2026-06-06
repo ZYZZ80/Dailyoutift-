@@ -44,7 +44,7 @@ export default function DashboardPage({
   const cards = [
     { label: 'Wardrobe', value: wardrobe.length, icon: <Shirt className="w-4 h-4" />, tab: 'wardrobe' as const },
     { label: 'History', value: styles.length, icon: <History className="w-4 h-4" />, tab: 'styles' as const },
-    { label: 'This week', value: `${plannedThisWeek}/7`, icon: <CalendarDays className="w-4 h-4" />, tab: 'week' as const },
+    { label: 'This week', value: `${plannedThisWeek}/7`, hint: plannedThisWeek === 0 ? 'Plan week' : undefined, icon: <CalendarDays className="w-4 h-4" />, tab: 'week' as const },
     { label: 'Today', value: todayOutfit ? 'Ready' : 'Open', icon: <Sparkles className="w-4 h-4" />, tab: 'today' as const },
   ]
   const actions = [
@@ -83,6 +83,7 @@ export default function DashboardPage({
                 <span className="text-gray-300">{card.icon}</span>
               </div>
               <p className="text-2xl font-semibold text-charcoal mt-2">{card.value}</p>
+              {'hint' in card && card.hint && <p className="text-[11px] font-medium text-blush mt-0.5">{card.hint}</p>}
             </button>
           ))}
         </div>
@@ -103,7 +104,7 @@ export default function DashboardPage({
           ))}
         </div>
 
-        {recentStyles.length > 0 && (
+        {recentStyles.length > 0 ? (
           <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
@@ -121,6 +122,16 @@ export default function DashboardPage({
                 </button>
               ))}
             </div>
+          </div>
+        ) : (
+          <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-charcoal">No generated pictures yet</p>
+              <p className="text-xs text-gray-400 mt-0.5">Create a style or try-on and it will appear here automatically.</p>
+            </div>
+            <button onClick={() => onOpenTab('build')} className="btn-coral rounded-xl px-3 py-2 text-xs font-medium flex-shrink-0">
+              Generate
+            </button>
           </div>
         )}
       </div>

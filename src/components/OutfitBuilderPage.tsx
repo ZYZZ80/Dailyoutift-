@@ -6,6 +6,7 @@ import { getProfilePhotos } from '../lib/storage'
 import { generateOutfitLook } from '../lib/preview'
 import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 import { saveGeneratedStyleToHistory } from '../lib/styleHistory'
+import Img from './Img'
 
 interface Props {
   wardrobe: ClothingItem[]
@@ -133,9 +134,10 @@ export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }:
           <div className="flex gap-2 overflow-x-auto pb-1">
             {selectedItems.map((item) => (
               <div key={item.id} className="relative flex-shrink-0">
-                <img
+                <Img
                   src={item.image}
                   alt={item.name}
+                  thumb={140}
                   className="w-16 h-16 rounded-xl object-cover border-2 border-charcoal"
                 />
                 <button
@@ -221,7 +223,7 @@ export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }:
       {/* Result image */}
       {resultImage && (
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <img src={resultImage} alt="Generated outfit" className="w-full object-contain max-h-[70vh]" />
+          <Img src={resultImage} alt="Generated outfit" eager className="w-full object-contain max-h-[70vh]" />
           <div className="flex gap-2 p-3">
             <button
               onClick={handleDownload}
@@ -260,7 +262,7 @@ export default function OutfitBuilderPage({ wardrobe, config, userId, onSaved }:
                     : 'hover:ring-1 hover:ring-gray-300 hover:ring-offset-1'
                 }`}
               >
-                <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                <Img src={item.image} alt={item.name} thumb={320} className="w-full h-full object-cover" />
                 {/* Overlay */}
                 <div className={`absolute inset-0 transition-opacity ${isSelected ? 'bg-charcoal/20' : 'bg-transparent'}`} />
                 {isSelected && (

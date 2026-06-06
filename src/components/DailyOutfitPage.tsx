@@ -14,6 +14,7 @@ import { generationQueue, useGenerationJob } from '../lib/generationQueue'
 import { fetchWeather, weatherToPromptHint, type WeatherInfo } from '../lib/weather'
 import { formatDateKey, localDateKey } from '../lib/dates'
 import { saveGeneratedStyleToHistory } from '../lib/styleHistory'
+import Img from './Img'
 
 const OCCASIONS = [
   { id: 'Casual',     emoji: '😊' },
@@ -420,7 +421,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
                       </div>
                     )}
                     <div className="aspect-square bg-gray-50">
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                      <Img src={item.image} alt={item.name} thumb={360} className="w-full h-full object-cover" />
                     </div>
                     <div className="p-3">
                       <p className="text-sm font-medium text-charcoal truncate">{item.name}</p>
@@ -471,7 +472,7 @@ export default function DailyOutfitPage({ wardrobe, todayOutfit, config, onOutfi
           <div className="space-y-3">
             {previewImage ? (
               <div className="relative rounded-2xl overflow-hidden bg-gray-50 border border-gray-100">
-                <img src={previewImage} alt="Outfit preview" className="w-full object-cover" />
+                <Img src={previewImage} alt="Outfit preview" eager className="w-full object-cover" />
                 <button
                   onClick={() => setPreviewImage(null)}
                   className="absolute top-2 right-2 bg-white/90 rounded-full p-1.5 hover:bg-white shadow"
