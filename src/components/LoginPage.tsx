@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
-import { Camera, CloudSun, Eye, EyeOff, Images, Loader2, Mail, ShieldCheck, Sparkles, UserPlus } from 'lucide-react'
+import { Camera, CloudSun, Eye, EyeOff, Images, Loader2, Mail, ShieldCheck, UserPlus } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { convertImageFileToJpegDataUrl } from '../lib/image'
 import { saveProfilePhotos } from '../lib/storage'
 import { saveProfilePhotosCloud, uploadProfilePhoto } from '../lib/cloud'
+import AppLogo from './AppLogo'
 
 interface Props {
   onLogin?: () => void
@@ -182,10 +183,8 @@ export default function LoginPage({ onLogin: _onLogin }: Props) {
         <section className="bg-[#2d2d2c] text-white rounded-[28px] p-8 sm:p-9 lg:p-10 flex flex-col justify-between min-h-[560px] overflow-hidden relative shadow-[0_1px_2px_rgba(44,44,44,0.12)]">
           <div className="absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-[#8f6f64]/45 via-[#ff8b6d]/10 to-transparent" />
           <div className="relative">
-            <div className="w-[52px] h-[52px] bg-white/10 rounded-[17px] flex items-center justify-center mb-7">
-              <Sparkles className="w-6 h-6 text-[#f2c4b0]" strokeWidth={1.5} />
-            </div>
-            <p className="text-[15px] text-white/48 mb-3">Daily Stylist</p>
+            <AppLogo className="w-[52px] h-[52px] mb-7" />
+            <p className="text-[15px] text-white/48 mb-3">Daily Outfit</p>
             <h1 className="text-[34px] sm:text-[42px] leading-[1.12] font-semibold max-w-[500px] tracking-normal">
               Your wardrobe, outfits, styles, and AI photos in one synced dashboard.
             </h1>
@@ -213,9 +212,7 @@ export default function LoginPage({ onLogin: _onLogin }: Props) {
         <section className="bg-white rounded-[28px] shadow-[0_1px_4px_rgba(44,44,44,0.06)] border border-gray-100 p-6 sm:p-10 flex flex-col justify-center min-h-[560px]">
           <div className="max-w-[430px] mx-auto w-full">
             <div className="mb-7">
-              <div className="w-[58px] h-[58px] bg-charcoal rounded-[16px] flex items-center justify-center mb-6">
-                {mode === 'signup' ? <UserPlus className="w-7 h-7 text-white" strokeWidth={1.5} /> : <Sparkles className="w-7 h-7 text-white" strokeWidth={1.5} />}
-              </div>
+              <AppLogo className="w-[58px] h-[58px] mb-6" />
               <h2 className="text-[26px] font-semibold text-charcoal leading-tight">
                 {mode === 'signup' ? 'Create your account' : 'Welcome back'}
               </h2>

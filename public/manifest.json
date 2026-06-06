@@ -1,6 +1,6 @@
 {
-  "name": "Daily Outfit Stylist",
-  "short_name": "Stylist",
+  "name": "Daily Outfit",
+  "short_name": "Outfit",
   "description": "Your personal AI outfit stylist",
   "start_url": "/",
   "display": "standalone",

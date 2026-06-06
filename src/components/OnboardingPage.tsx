@@ -31,7 +31,7 @@ export default function OnboardingPage({ onAddFirstItem }: Props) {
         </div>
         <h1 className="text-2xl sm:text-3xl font-semibold text-charcoal">Build your smart wardrobe</h1>
         <p className="text-sm text-gray-400 mt-2 max-w-md mx-auto leading-relaxed">
-          Start with a few clothing photos. After that, Daily Stylist becomes your live dashboard for outfits, generated pictures, and saved styles.
+          Start with a few clothing photos. After that, Daily Outfit becomes your live dashboard for outfits, generated pictures, and saved styles.
         </p>
 
         <div className="grid sm:grid-cols-3 gap-3 mt-8 text-left">

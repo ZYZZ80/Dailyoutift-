@@ -41,7 +41,7 @@ export default function WardrobePage({ wardrobe, config, onUpdate, userId }: Pro
         onUpdate()
         setTimeout(() => setRestoreMsg(''), 5000)
       } catch {
-        setRestoreMsg('Could not read backup file — make sure it\'s a valid Daily Stylist backup.')
+        setRestoreMsg('Could not read backup file — make sure it\'s a valid Daily Outfit backup.')
         setTimeout(() => setRestoreMsg(''), 5000)
       }
     }

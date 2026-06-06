@@ -4,6 +4,7 @@ import { saveConfig, type AppConfig } from '../lib/storage'
 import { saveConfigCloud } from '../lib/cloud'
 import { testGeminiKey, checkProxy } from '../lib/claude'
 import { SUPABASE_ENABLED } from '../lib/supabase'
+import AppLogo from './AppLogo'
 
 interface Props {
   onSaved: () => void
@@ -85,10 +86,8 @@ export default function ApiKeySetup({ onSaved, userId }: Props) {
   return (
     <div className="min-h-screen bg-cream flex items-center justify-center p-6">
       <div className="bg-white rounded-3xl shadow-lg p-8 max-w-md w-full text-center">
-        <div className="w-16 h-16 bg-blush/30 rounded-full flex items-center justify-center mx-auto mb-6">
-          <Zap className="w-8 h-8 text-blush" strokeWidth={1.5} />
-        </div>
-        <h1 className="text-2xl font-semibold text-charcoal mb-2">Daily Outfit Stylist</h1>
+        <AppLogo className="w-16 h-16 mx-auto mb-6" />
+        <h1 className="text-2xl font-semibold text-charcoal mb-2">Daily Outfit</h1>
         <p className="text-gray-500 mb-6 text-sm">Choose your AI provider to get started.</p>
 
         {/* Provider tabs */}

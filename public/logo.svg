@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Daily Outfit logo">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="96" x2="864" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF9F1"/>
+      <stop offset="0.58" stop-color="#F8EDE0"/>
+      <stop offset="1" stop-color="#EFE0D2"/>
+    </linearGradient>
+    <linearGradient id="coat" x1="250" y1="360" x2="520" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E7C9A3"/>
+      <stop offset="1" stop-color="#C69254"/>
+    </linearGradient>
+    <linearGradient id="pants" x1="610" y1="405" x2="780" y2="850" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#262828"/>
+      <stop offset="1" stop-color="#101111"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="22" flood-color="#1F1F1F" flood-opacity="0.16"/>
+    </filter>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1F1F1F" flood-opacity="0.13"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="#FAF7F2"/>
+  <rect x="38" y="38" width="948" height="948" rx="210" fill="url(#bg)"/>
+  <path d="M790 212l25 62 63 25-63 25-25 63-25-63-63-25 63-25 25-62z" fill="#C89A62"/>
+
+  <g filter="url(#shadow)">
+    <path d="M508 334v-74c0-38 31-69 70-69 38 0 69 31 69 69 0 35-25 62-56 68" fill="none" stroke="#202324" stroke-width="24" stroke-linecap="round"/>
+    <path d="M509 333L202 501c-38 21-23 80 20 80h584c43 0 58-59 20-80L519 333" fill="none" stroke="#202324" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <g filter="url(#soft)">
+    <path d="M278 580c23-95 63-168 119-219l122 23-64 485H232l46-289z" fill="url(#coat)"/>
+    <path d="M398 361c-50 95-64 235-41 508h134l55-476-28-9-120-23z" fill="#D8A56A"/>
+    <path d="M393 380l89-27 119 43c-5 135-28 270-69 404-92-6-161-32-206-79 34-89 56-203 67-341z" fill="#FFFDF9"/>
+    <path d="M470 356c32 54 73 55 122 10l21 39c-56 42-108 40-158-6l15-43z" fill="#E7C9A3"/>
+    <path d="M325 453l73-92-39 193 104-37-100 100 34 252H232l46-289c8-34 22-76 47-127z" fill="#EBD6BC" opacity="0.84"/>
+    <circle cx="362" cy="641" r="14" fill="#17191A"/>
+
+    <path d="M597 420h190c19 0 34 15 34 34l-16 415H586l11-449z" fill="url(#pants)"/>
+    <path d="M703 420v449" stroke="#3A3C3D" stroke-width="7" stroke-linecap="round"/>
+    <path d="M598 456h223M759 452c0 42 24 70 62 80" stroke="#404244" stroke-width="7" fill="none" stroke-linecap="round"/>
+    <circle cx="728" cy="456" r="11" fill="#C89A62"/>
+  </g>
+</svg>

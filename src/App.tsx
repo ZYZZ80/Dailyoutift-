@@ -9,6 +9,7 @@ import type { ClothingItem, OutfitSuggestion, StyleImage } from './types'
 import LoginPage from './components/LoginPage'
 import GenerationStatusBar from './components/GenerationStatusBar'
 import OnboardingPage from './components/OnboardingPage'
+import AppLogo from './components/AppLogo'
 import { useGenerationJob } from './lib/generationQueue'
 import { localDateKey, previousDateKey } from './lib/dates'
 
@@ -491,8 +492,8 @@ export default function App() {
   function SidebarContent({ onClose }: { onClose?: () => void }) {
     return (<>
       <div className="h-16 flex items-center gap-3 px-5 border-b border-white/10">
-        <div className="w-8 h-8 bg-blush/30 rounded-xl flex items-center justify-center"><Sparkles className="w-4 h-4 text-blush" strokeWidth={1.5} /></div>
-        <div className="flex-1 min-w-0"><p className="font-semibold text-white text-sm leading-none">Daily Stylist</p><p className="text-[10px] text-white/40 mt-0.5">{PROVIDER_LABELS[config.provider]}</p></div>
+        <AppLogo className="w-8 h-8 flex-shrink-0" />
+        <div className="flex-1 min-w-0"><p className="font-semibold text-white text-sm leading-none">Daily Outfit</p><p className="text-[10px] text-white/40 mt-0.5">{PROVIDER_LABELS[config.provider]}</p></div>
         {onClose && <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-lg flex-shrink-0"><X className="w-4 h-4 text-white/60" /></button>}
       </div>
       {(user || !SUPABASE_ENABLED) && (
@@ -540,8 +541,8 @@ export default function App() {
           <div className="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <button onClick={() => setSidebarOpen(true)} className="p-1.5 hover:bg-gray-100 rounded-full mr-1"><Menu className="w-4 h-4 text-gray-400" /></button>
-              <div className="w-7 h-7 bg-gradient-to-br from-charcoal to-coral rounded-lg flex items-center justify-center"><Sparkles className="w-4 h-4 text-white" strokeWidth={1.5} /></div>
-              <span className="font-semibold text-charcoal text-sm">Daily Stylist</span>
+              <AppLogo className="w-7 h-7 flex-shrink-0" />
+              <span className="font-semibold text-charcoal text-sm">Daily Outfit</span>
               <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium uppercase">{PROVIDER_LABELS[config.provider]}</span>
             </div>
             {userPhoto ? <img src={userPhoto} alt={userName} className="w-7 h-7 rounded-full object-cover" /> : <div className="w-7 h-7 rounded-full bg-charcoal flex items-center justify-center"><span className="text-[10px] font-bold text-white">{getInitials(userName)}</span></div>}

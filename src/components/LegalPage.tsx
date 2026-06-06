@@ -21,7 +21,7 @@ export default function LegalPage() {
 
       <section className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5 space-y-4 text-sm text-gray-500 leading-relaxed">
         <h3 className="text-sm font-semibold text-charcoal">Terms of Use</h3>
-        <p>Daily Stylist provides AI-generated outfit suggestions and images for inspiration. It is not a professional fashion, health, safety, or purchasing advisor.</p>
+        <p>Daily Outfit provides AI-generated outfit suggestions and images for inspiration. It is not a professional fashion, health, safety, or purchasing advisor.</p>
         <p>AI results can be inaccurate, delayed, or unavailable. Paid access may include higher usage limits, but does not guarantee perfect generation results.</p>
         <p>Users are responsible for uploaded content, account security, and following local laws and platform rules.</p>
       </section>
